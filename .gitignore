@@ -12,3 +12,8 @@ notebooks/.ipynb_checkpoints/
 
 # local
 .DS_Store
+# Local RAG index artifacts
+store/
+.rag/
+faiss.index
+meta.jsonl
