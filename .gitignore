@@ -17,3 +17,7 @@ store/
 .rag/
 faiss.index
 meta.jsonl
+store/
+.rag/
+faiss.index
+meta.jsonl
