@@ -1,0 +1,9 @@
+{"question":"List the core components in the FAM moderation architecture and their roles.","gold_sources":[{"doc":"FAM-Moderation-System-Design.pdf"}]}
+{"question":"What open issues or risks are called out in the FAM Moderation Solution Discussion?","gold_sources":[{"doc":"FAM-Moderation-Solution-Discussion.pdf"}]}
+{"question":"Which external services or teams does the Santos Catalog Moderation design depend on?","gold_sources":[{"doc":"Santos-Catalog-Moderation.pdf"}]}
+{"question":"What are the policy categories covered by FAM (e.g., nudity, adult content), and which ones are in-scope?","gold_sources":[{"doc":"FAM-PRFAQ.docx"}]}
+{"question":"What monitoring inputs/signals does FAM use to detect violations?","gold_sources":[{"doc":"FAM-PRFAQ.docx"}]}
+{"question":"Describe the review/moderation workflow for Santos Catalog items at a high level.","gold_sources":[{"doc":"Santos-Catalog-Moderation.pdf"}]}
+{"question":"How does FAM handle image moderation and what are the limitations noted?","gold_sources":[{"doc":"FAM-Moderation-System-Design.pdf"},{"doc":"FAM-PRFAQ.docx"}]}
+{"question":"What is the primary purpose of the FAM Moderation system?","gold_sources":[{"doc":"FAM-Moderation-System-Design.pdf"},{"doc":"FAM-Moderation-Solution-Discussion.pdf"}]}
+{"question":"What monitoring inputs/signals does FAM use to detect violations?","gold_sources":[{"doc":"FAM-PRFAQ.docx"},{"doc":"FAM-Moderation-System-Design.pdf"}]}
