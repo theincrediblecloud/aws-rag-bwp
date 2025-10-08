@@ -1,10 +1,22 @@
-langchain
-langchain-core
-langchain-community
-pypdf
-pymupdf
-sentence-transformers
-faiss-cpu
-chromadb
-langchain-groq
-python-dotenv
+# langchain
+# langchain-core
+# langchain-community
+# pypdf
+# pymupdf
+# sentence-transformers
+# faiss-cpu
+# chromadb
+# langchain-groq
+# python-dotenv
+
+fastapi==0.115.4
+uvicorn==0.30.6
+pydantic==2.9.2
+python-dotenv==1.0.1
+
+boto3==1.35.36
+opensearch-py==2.7.1
+
+# dev (optional now)
+ruff==0.6.9
+black==24.8.0

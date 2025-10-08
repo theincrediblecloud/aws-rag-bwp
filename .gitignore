@@ -1,0 +1,14 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# notebooks
+notebooks/.ipynb_checkpoints/
+
+# local
+.DS_Store
