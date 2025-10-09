@@ -7,11 +7,13 @@ from rag.core.config import AppConfig
 from rag.core import retriever
 from rag.adapters.embeddings_local import LocalEmbedder
 from rag.adapters.vs_faiss import FaissStore  # you said you're on FAISS
-
-# --- constants (add one cap and reuse) ---
-EXCERPT_MAX = 180            # tighter bullets read better
-EXCERPT_MAX_APPENDIX = 140   # even tighter for late/appendix pages
-PREFER_PAGES_BELOW = 8       # treat pages < 8 as "early"
+from rag.core.constants import (
+    GOOD, GOOD_SUMMARY, BAD_START, TOO_META, BAD_META, BAD_PRONOUN_LEAD,
+    KEY_DECISION, HAS_OBERON, HAS_FRE, HAS_PHASE, HAS_OUTPUTS, HAS_INPUTS, BAD_LEAD,
+    MODE_DEF, MODE_FLOW, MODE_PROS, MODE_FLOW_HINT, MODE_PROS_HINT,
+    APP_REGEX, TABLEY_LINE, ALLCAPS_RUN, SENT_SPLIT,
+    EXCERPT_MAX, EXCERPT_MAX_APPENDIX, PREFER_PAGES_BELOW, BAD_PREFIX,
+)
 
 cfg = AppConfig()
 app = FastAPI(title="Local RAG POC — stable baseline")
@@ -20,9 +22,6 @@ print(f"[INFO] API using index dir: {cfg.index_dir}")
 embedder = LocalEmbedder(cfg.model_name)
 vector = FaissStore(cfg.index_path, cfg.meta_path, cfg.embed_dim)
 vector.ensure()
-
-# sentence splitter (simple rule-based)
-_SENT_SPLIT = re.compile(r'(?<=[.!?])\s+(?=[A-Z0-9\(])')
 
 
 # sentences we don't want as bullets
@@ -64,49 +63,6 @@ def _clean(s: str) -> str:
 
     s = re.sub(r'\S{60,}', '', s)  # drop ultra-long OCR artifacts
     return s
-
-
-GOOD = re.compile(
-    r'\b(decision|build|architecture|approach|solution|design|integrat(?:e|ion)|'
-    r'workflow|phase|FRE|FAMRiskEvaluator|evaluate SPI|asynchron|IN_PROGRESS|Oberon)\b',
-    re.I
-)
-
-# --- weights tuned for "design/decision/integration/FRE/Oberon/phases" ---
-GOOD_SUMMARY = re.compile(
-    r'\b(decision|decided|design|architecture|approach|solution|integrat(?:e|ion)|'
-    r'workflow|phase[s]?|FRE|FAMRiskEvaluator|Oberon|real[- ]?time)\b', re.I
-)
-BAD_START = re.compile(r'^(glossary|requirements|appendix|background)\b', re.I)
-TOO_META = re.compile(r'\b(for more|refer to|see also|details (?:are|in))\b', re.I)
-BAD_META = re.compile(
-    r'\b(we only listed|we (?:will|won\'t)|in this (?:doc|section|quip)|'
-    r'for additional (?:factors|information)|details (?:are|in)|'
-    r'approaches? details|see (?:also )?|refer to)\b',
-    re.I,
-)
-BAD_PRONOUN_LEAD = re.compile(r'^(?:we|this (?:doc|section|quip))\b', re.I)
-# --- signal extractors to build a deterministic 1-liner ---
-KEY_DECISION = re.compile(r'\b(decision|decided|choose|chose)\b', re.I)
-HAS_OBERON   = re.compile(r'\bOberon\b', re.I)
-HAS_FRE      = re.compile(r'\bFRE\b|\bFAM\s*Risk\s*Evaluator\b', re.I)
-HAS_PHASE    = re.compile(r'\bphase[s]?\b|\bPOC\b|\bmanual moderation\b|\breal[- ]?time\b', re.I)
-HAS_OUTPUTS  = re.compile(r'\b(APPROVE|REJECT|IN[_ -]?MANUAL[_ -]?REVIEW|RiskOutcome|data lake|Paragon)\b', re.I)
-HAS_INPUTS   = re.compile(r'\b(text|image|image URLs?|catalog|S3)\b', re.I)
-
-# penalize meta/filler sentences
-BAD_LEAD = re.compile(r'^(additionally|furthermore|moreover|background|glossary|requirements)\b', re.I)
-
-# --- answer mode detection ---
-MODE_DEF  = re.compile(r'\b(what is|define|definition|purpose|overview|high[- ]?level)\b', re.I)
-MODE_FLOW = re.compile(r'\b(workflow|how (it|this) works?|process|steps?|pipeline|orchestrat(?:e|ion))\b', re.I)
-MODE_PROS = re.compile(r'\b(pros|cons|trade[- ]?offs?|advantages?|disadvantages?)\b', re.I)
-MODE_FLOW_HINT = re.compile(r'\b(workflow|process|steps?|orchestrat(?:e|ion)|evaluate SPI|IN_PROGRESS)\b', re.I)
-MODE_PROS_HINT = re.compile(r'\b(pros?|cons?|advantages?|disadvantages?|trade[- ]?offs?)\b', re.I)
-
-APP_REGEX   = re.compile(r'\bAPPENDIX\b', re.I)
-TABLEY_LINE = re.compile(r'(?:^\s*[A-Z][A-Z0-9 _/-]{3,}\s+Yes\s+No\s*$)|(\.{3,}\s*\d+\b)', re.I | re.M)
-ALLCAPS_RUN = re.compile(r'\b(?:[A-Z]{3,}(?:\s+[A-Z0-9&/-]{3,}){1,})\b')
 
 def _sent_len_score(s: str) -> int:
     n = len(s)
@@ -167,7 +123,7 @@ def _simple_excerpt(chunk_text: str, page: int | None) -> str:
         txt = TABLEY_LINE.sub("", txt)
         txt = ALLCAPS_RUN.sub("", txt)
 
-    sents = [s.strip() for s in _SENT_SPLIT.split(txt) if len(s.strip()) >= 40]
+    sents = [s.strip() for s in SENT_SPLIT.split(txt) if len(s.strip()) >= 40]
     if not sents:
         cap = EXCERPT_MAX_APPENDIX if (page is not None and page >= PREFER_PAGES_BELOW) else EXCERPT_MAX
         return txt[:cap].rstrip() + ("…" if len(txt) > cap else "")
