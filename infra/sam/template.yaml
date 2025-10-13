@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: RAG FastAPI + Slack in AWS Lambda
+
+Parameters:
+  ArtifactsBucket:
+    Type: String
+  ModelName:
+    Type: String
+    Default: sentence-transformers/all-MiniLM-L6-v2
+  IndexPrefix:
+    Type: String
+    Default: rag/index
+  FaissKey:
+    Type: String
+    Default: rag/index/faiss.index
+  MetaKey:
+    Type: String
+    Default: rag/index/meta.json
+  SlackSigningSecretArn:
+    Type: String
+  SlackBotTokenArn:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 2048
+    Runtime: python3.11
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        APP_ENV: prod
+        ARTIFACTS_BUCKET: !Ref ArtifactsBucket
+        MODEL_NAME: !Ref ModelName
+        INDEX_PREFIX: !Ref IndexPrefix
+        FAISS_KEY: !Ref FaissKey
+        META_KEY: !Ref MetaKey
+        SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
+        SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
+
+Resources:
+  RAGApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src
+      Handler: rag/api/app.handler
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ArtifactsBucket
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SlackSigningSecretArn
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SlackBotTokenArn
+        - CloudWatchLogsFullAccess
+      Events:
+        HttpApiEvent:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"

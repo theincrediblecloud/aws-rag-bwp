@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic>=2
+mangum
+boto3
+faiss-cpu
+numpy
+scipy
+sentence-transformers
