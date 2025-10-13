@@ -21,6 +21,8 @@ Parameters:
     Type: String
   SlackBotTokenArn:
     Type: String
+  RagApiUrl:
+    Type: String
 
 Globals:
   Function:
@@ -59,6 +61,33 @@ Resources:
           Properties:
             Path: /{proxy+}
             Method: ANY
+  SlackEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src
+      Handler: handlers/slack_events.handler
+      Runtime: python3.11   # or 3.13 if you changed it
+      MemorySize: 256
+      Timeout: 10
+      Events:
+        SlackEventsRoute:
+          Type: HttpApi
+          Properties:
+            Path: /slack/events
+            Method: POST
+            ApiId: !Ref HttpApi
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowMethods: ["GET", "POST", "OPTIONS"]
+        AllowHeaders: ["*"]
+        AllowOrigins: ["*"]
+      StageName: prod # or any stage name you prefer  
+      
+
+
 
 Outputs:
   ApiUrl:
