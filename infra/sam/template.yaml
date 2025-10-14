@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: RAG FastAPI + Slack in AWS Lambda
+
+Parameters:
+  ArtifactsBucket:
+    Type: String
+  ModelName:
+    Type: String
+    Default: sentence-transformers/all-MiniLM-L6-v2
+  IndexPrefix:
+    Type: String
+    Default: rag/index
+  FaissKey:
+    Type: String
+    Default: rag/index/faiss.index
+  MetaKey:
+    Type: String
+    Default: rag/index/meta.json
+  SlackSigningSecretArn:
+    Type: String
+  SlackBotTokenArn:
+    Type: String
+  RagApiUrl:
+    Type: String
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 2048
+    Runtime: python3.11
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        APP_ENV: prod
+        ARTIFACTS_BUCKET: !Ref ArtifactsBucket
+        MODEL_NAME: !Ref ModelName
+        INDEX_PREFIX: !Ref IndexPrefix
+        FAISS_KEY: !Ref FaissKey
+        META_KEY: !Ref MetaKey
+        SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
+        SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: Prod
+      CorsConfiguration:
+        AllowMethods: ["GET", "POST", "OPTIONS"]
+        AllowHeaders: ["*"]
+        AllowOrigins: ["*"]
+
+  RAGApi:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src           # adjust if your code path differs
+      Handler: rag/api/app.handler
+      Policies:
+        # logging
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: arn:aws:logs:*:*:*
+        # data/index + secrets
+        - S3ReadPolicy:
+            BucketName: !Ref ArtifactsBucket
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SlackSigningSecretArn
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SlackBotTokenArn
+      Events:
+        AnyRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  SlackEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src           # adjust if your code path differs
+      Handler: handlers/slack_events.handler
+      Runtime: python3.11
+      MemorySize: 256
+      Timeout: 10
+      Policies:
+        # logging
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: arn:aws:logs:*:*:*
+        # secrets for Slack
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SlackSigningSecretArn
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SlackBotTokenArn
+      Events:
+        SlackEventsRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /slack/events
+            Method: POST
+
+Outputs:
+  ApiBaseUrl:
+    Description: HTTP API base URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  SlackEventsUrl:
+    Description: Slack events endpoint
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/slack/events"

@@ -1,21 +1,29 @@
 # src/rag/core/config.py
-from pathlib import Path
 import os
+from dataclasses import dataclass
 
+@dataclass
 class AppConfig:
-    def __init__(self):
-        # environment label used by /health and logs
-        self.app_env = os.getenv("APP_ENV", "local")
+    app_env: str = os.getenv("APP_ENV", "prod")
 
-        # One place to control where faiss.index + meta.jsonl live
-        self.index_dir   = Path(os.getenv("INDEX_DIR", "store")).resolve()
-        self.index_dir.mkdir(parents=True, exist_ok=True)
-        self.index_path  = self.index_dir / "faiss.index"
-        self.meta_path   = self.index_dir / "meta.jsonl"
+    # Embeddings / model
+    model_name: str = os.getenv("MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
+    model_local_dir: str = os.getenv("MODEL_LOCAL_DIR", "/tmp/model")  # Lambda writable
 
-        # Retrieval/ingest knobs (env-overridable)
-        self.model_name    = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-        self.embed_dim     = int(os.getenv("EMBED_DIM", "384"))
-        self.chunk_size    = int(os.getenv("CHUNK_SIZE", "400"))
-        self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "80"))
-        self.top_k         = int(os.getenv("TOP_K", "8"))
+    # Vector index (S3)
+    s3_bucket: str  = os.getenv("ARTIFACTS_BUCKET", "")
+    index_prefix: str = os.getenv("INDEX_PREFIX", "rag/index")
+    meta_key: str     = os.getenv("META_KEY", "rag/index/meta.json")
+    faiss_key: str    = os.getenv("FAISS_KEY", "rag/index/faiss.index")
+
+    # Slack secrets (stored as Secrets Manager ARNs)
+    slack_signing_secret_arn: str = os.getenv("SLACK_SIGNING_SECRET_ARN", "")
+    slack_bot_token_arn: str      = os.getenv("SLACK_BOT_TOKEN_ARN", "")
+
+    # Retrieval
+    top_k: int = int(os.getenv("TOP_K", "8"))
+
+    # Computed local paths (Lambda’s /tmp)
+    index_dir: str = os.getenv("INDEX_DIR", "/tmp/index")
+    index_path: str = os.path.join(index_dir, "faiss.index")
+    meta_path: str  = os.path.join(index_dir, "meta.json")
