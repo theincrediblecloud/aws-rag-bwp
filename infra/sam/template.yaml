@@ -50,12 +50,13 @@ Resources:
         AllowMethods: ["GET", "POST", "OPTIONS"]
         AllowHeaders: ["*"]
         AllowOrigins: ["*"]
-
   RAGApi:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src           # adjust if your code path differs
-      Handler: rag/api/app.handler
+      CodeUri: ../../src           # adjust if your code path differs
+      Handler: rag.api.app.handler
+      MemorySize: 2048
+      Timeout: 30
       Policies:
         # logging
         - Statement:
@@ -83,11 +84,13 @@ Resources:
   SlackEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../src           # adjust if your code path differs
-      Handler: handlers/slack_events.handler
-      Runtime: python3.11
+      CodeUri: ../../src           # adjust if your code path differs
+      Handler: handlers.slack_events.handle
       MemorySize: 256
       Timeout: 10
+      Environment:
+        Variables:
+          RAG_API_URL: !Ref RagApiUrl
       Policies:
         # logging
         - Statement:
