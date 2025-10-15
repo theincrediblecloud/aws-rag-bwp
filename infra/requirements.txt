@@ -1,0 +1,7 @@
+fastapi
+mangum
+pydantic
+boto3
+httpx
+# optional local use:
+# uvicorn
