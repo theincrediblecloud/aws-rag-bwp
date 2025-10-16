@@ -1,4 +1,9 @@
-from typing import List, Dict
-
-def condense_query(history: List[Dict], user_msg: str) -> str:
-    return user_msg.strip()
+# src/rag/core/retriever.py
+import os
+RERANKER_PROVIDER = os.getenv("RERANKER_PROVIDER", "none").lower()
+LocalReranker = None
+if RERANKER_PROVIDER == "local":
+    try:
+        from rag.adapters.reranker_local import LocalReranker
+    except Exception:
+        LocalReranker = None

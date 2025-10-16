@@ -4,9 +4,22 @@ from typing import List, Dict
 from pathlib import Path
 from rag.core.config import AppConfig
 from rag.core.chunker import chunk_text
-from rag.adapters.embeddings_local import LocalEmbedder
+#from rag.adapters.embeddings_local import LocalEmbedder
 from rag.adapters.vs_faiss import FaissStore
 # from rag.adapters.vs_numpy import NumpyStore
+import os
+
+def _make_embedder():
+    provider = os.getenv("EMBEDDER_PROVIDER", "local").lower()
+    if provider == "bedrock":
+        from rag.adapters.embeddings_bedrock import BedrockEmbedder
+        return BedrockEmbedder(
+            model_id=os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2"),
+            region=os.getenv("AWS_REGION", "us-east-1"),
+        )
+    else:
+        from rag.adapters.embeddings_local import LocalEmbedder
+        return LocalEmbedder(os.getenv("MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2"))
 
 def ingest_dirs(data_dirs: List[str], fresh: bool = False) -> None:
     cfg = AppConfig()
@@ -21,7 +34,8 @@ def ingest_dirs(data_dirs: List[str], fresh: bool = False) -> None:
             cfg.meta_path.unlink()
             print(f"[INFO] Deleted {cfg.meta_path}")
 
-    emb = LocalEmbedder(cfg.model_name)
+    #emb = LocalEmbedder(cfg.model_name)
+    emb = _make_embedder()
     vs = FaissStore(cfg.index_path, cfg.meta_path, cfg.embed_dim)
     # vs = NumpyStore(cfg.embed_dim)
     vs.ensure()

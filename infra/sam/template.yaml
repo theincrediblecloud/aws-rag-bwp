@@ -1,35 +1,23 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: RAG FastAPI + Slack in AWS Lambda
+Description: RAG FastAPI + Slack (no layers)
 
 Parameters:
-  ArtifactsBucket:
-    Type: String
-  ModelName:
-    Type: String
-    Default: sentence-transformers/all-MiniLM-L6-v2
-  IndexPrefix:
-    Type: String
-    Default: rag/index
-  FaissKey:
-    Type: String
-    Default: rag/index/faiss.index
-  MetaKey:
-    Type: String
-    Default: rag/index/meta.json
-  SlackSigningSecretArn:
-    Type: String
-  SlackBotTokenArn:
-    Type: String
-  RagApiUrl:
-    Type: String
+  ArtifactsBucket:               { Type: String }
+  ModelName:                     { Type: String, Default: sentence-transformers/all-MiniLM-L6-v2 }
+  IndexPrefix:                   { Type: String, Default: rag/index }
+  FaissKey:                      { Type: String, Default: rag/index/faiss.index }
+  MetaKey:                       { Type: String, Default: rag/index/meta.json }
+  SlackSigningSecretArn:         { Type: String }
+  SlackBotTokenArn:              { Type: String }
+  RagApiUrl:                     { Type: String }
 
 Globals:
   Function:
+    Runtime: python3.11
+    Architectures: [arm64]  # Use ARM architecture for better performance/cost
     Timeout: 30
     MemorySize: 2048
-    Runtime: python3.11
-    Architectures: [x86_64]
     Environment:
       Variables:
         APP_ENV: prod
@@ -38,8 +26,9 @@ Globals:
         INDEX_PREFIX: !Ref IndexPrefix
         FAISS_KEY: !Ref FaissKey
         META_KEY: !Ref MetaKey
-        SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
-        SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
+        EMBEDDER_PROVIDER: bedrock
+        # AWS_REGION: !Ref AWS::Region
+        BEDROCK_REGION: !Ref AWS::Region
 
 Resources:
   HttpApi:
@@ -50,15 +39,16 @@ Resources:
         AllowMethods: ["GET", "POST", "OPTIONS"]
         AllowHeaders: ["*"]
         AllowOrigins: ["*"]
+
   RAGApi:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../../src           # adjust if your code path differs
+      CodeUri: ../../src            # <- your repo's src/
       Handler: rag.api.app.handler
-      MemorySize: 2048
-      Timeout: 30
       Policies:
-        # logging
+        - S3ReadPolicy: { BucketName: !Ref ArtifactsBucket }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackBotTokenArn }
         - Statement:
             - Effect: Allow
               Action:
@@ -66,13 +56,6 @@ Resources:
                 - logs:CreateLogStream
                 - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
-        # data/index + secrets
-        - S3ReadPolicy:
-            BucketName: !Ref ArtifactsBucket
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref SlackSigningSecretArn
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref SlackBotTokenArn
       Events:
         AnyRoute:
           Type: HttpApi
@@ -84,15 +67,19 @@ Resources:
   SlackEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../../src           # adjust if your code path differs
-      Handler: handlers.slack_events.handle
+      CodeUri: ../../handlers       # <- your repo's handlers/
+      Handler: slack_events.handler
+      # CodeUri: ../src          # ← same code root; it will reuse the same deps bundle
+      # Handler: handlers/slack_events.handler
+      Runtime: python3.11
       MemorySize: 256
       Timeout: 10
       Environment:
         Variables:
-          RAG_API_URL: !Ref RagApiUrl
+          RagApiUrl: !Ref RagApiUrl
       Policies:
-        # logging
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackBotTokenArn }
         - Statement:
             - Effect: Allow
               Action:
@@ -100,11 +87,6 @@ Resources:
                 - logs:CreateLogStream
                 - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
-        # secrets for Slack
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref SlackSigningSecretArn
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref SlackBotTokenArn
       Events:
         SlackEventsRoute:
           Type: HttpApi
@@ -115,8 +97,8 @@ Resources:
 
 Outputs:
   ApiBaseUrl:
-    Description: HTTP API base URL
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
   SlackEventsUrl:
-    Description: Slack events endpoint
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/slack/events"
+  ChatApiUrl:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat"
