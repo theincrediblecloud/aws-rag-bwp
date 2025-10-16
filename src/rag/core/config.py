@@ -27,3 +27,11 @@ class AppConfig:
     index_dir: str = os.getenv("INDEX_DIR", "/tmp/index")
     index_path: str = os.path.join(index_dir, "faiss.index")
     meta_path: str  = os.path.join(index_dir, "meta.json")
+
+    # Embedding provider and related configs
+    aws_region: str = os.getenv("AWS_REGION", "us-east-1")
+    embed_provider: str = os.getenv("EMBED_PROVIDER", "bedrock")  # bedrock | local
+    bedrock_region: str = os.getenv("BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))
+    bedrock_model: str = os.getenv("BEDROCK_EMBED_MODEL", "amazon.titan-embed-text-v2:0")
+    embed_dim: int = int(os.getenv("EMBED_DIM", "1024"))
+    use_s3_index: bool = os.getenv("USE_S3_INDEX", "true").lower() == "true"

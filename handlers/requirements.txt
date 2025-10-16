@@ -1,0 +1,13 @@
+fastapi
+mangum
+pydantic
+boto3
+httpx
+# sentence-transformers
+#faiss-cpu
+# --- IGNORE ---
+# requests
+# slack_bolt==1.20.1
+# aws-lambda-powertools==2.39.1
+# urllib3<2
+# --- IGNORE ---
