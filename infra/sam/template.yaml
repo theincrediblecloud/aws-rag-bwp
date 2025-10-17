@@ -13,7 +13,7 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.11
-#    Architectures: [arm64]  # Use ARM architecture for better performance/cost
+    Architectures: [arm64]  # Use ARM architecture for better performance/cost
     Timeout: 30
     MemorySize: 2048
     Environment:
@@ -29,6 +29,23 @@ Globals:
         SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
 
 Resources:
+  # Build a pure NumPy layer for arm64 Py3.11
+  NumpyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: numpy-1264-arm64
+      ContentUri: ../../infra/layers/numpy   # <-- path on disk (see section B)
+      CompatibleRuntimes: [python3.11]
+      CompatibleArchitectures: [arm64]
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: python3.11
+      BuildArchitecture: arm64
+      BuildProperties:
+        Commands:
+          # put site-packages under /opt/python so Lambda can import it
+          - pip install -r requirements.txt -t "$LAMBDA_TASK_ROOT/python"
+
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -41,11 +58,10 @@ Resources:
   RAGApi:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures: [x86_64]
-      PackageType: Zip
-      Runtime: python3.11
       CodeUri: ../../src            # <- your repo's src/
       Handler: rag.api.app.handler
+      Layers:
+        - !Ref NumpyLayer         # <---- add the layer
       Policies:
         - S3ReadPolicy: { BucketName: !Ref ArtifactsBucket }
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
@@ -77,10 +93,10 @@ Resources:
   SlackEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Architectures: [arm64]
       CodeUri: ../../src       # <- your repo's handlers/
       Handler: handlers.slack_events.handler
-      Runtime: python3.11
+      Layers:
+        - !Ref NumpyLayer         # <---- add the layer
       MemorySize: 256
       Timeout: 10
       Environment:

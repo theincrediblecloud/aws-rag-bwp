@@ -1,5 +1,5 @@
 # src/requirements.txt
---only-binary=:all:
+#--only-binary=:all:
 
 # core web stack (versions known-good on Lambda py3.11)
 fastapi==0.110.0
@@ -14,8 +14,8 @@ boto3==1.34.34
 
 # numeric + faiss (x86_64 wheel exists; will NOT compile)
 numpy==1.26.4
-faiss-cpu==1.7.4
-
+# faiss-cpu==1.7.4
+#--only-binary=numpy
 # # transformers + sentence-transformers (x86_64 wheels exist; will NOT compile)
 # transformers==4.44.2
 # sentence-transformers==2.5.4
