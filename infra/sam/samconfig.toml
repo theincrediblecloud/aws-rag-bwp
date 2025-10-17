@@ -1,7 +1,7 @@
 version = 0.1
 
 [default.deploy.parameters]
-stack_name = "slack-rag"
+stack_name = "slack-rag-v2"
 resolve_s3 = true
 s3_prefix = "slack-rag"
 region = "us-east-1"

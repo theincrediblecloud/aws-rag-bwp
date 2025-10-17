@@ -43,6 +43,17 @@ def _post_message(channel: str, text: str):
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read().decode())
 
+def _call_rag_api(question: str):
+    CHAT_API = os.environ.get("RagApiUrl", "").strip()
+    body = json.dumps({"user_msg": question}).encode()
+    req = urllib.request.Request(
+        CHAT_API,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=6) as r:
+        return json.loads(r.read().decode())
 def handler(event, context):
     headers = event.get("headers") or {}
     body = event.get("body") or ""
@@ -72,21 +83,13 @@ def handler(event, context):
                     _post_message(channel, "pong")
                 except Exception as e:
                     print("[slack] postMessage error:", e)
-
             else:
                 # call RAG API
                 rag_url = os.environ.get("RagApiUrl", "").strip()
                 if rag_url:
-                    req = urllib.request.Request(
-                        rag_url,
-                        data=json.dumps({"user_msg": ev.get("text", "")}).encode(),
-                        headers={"Content-Type": "application/json"},
-                        method="POST"
-                    )
                     try:
-                        with urllib.request.urlopen(req, timeout=5) as r:
-                            j = json.loads(r.read().decode())
-                            ans = j.get("answer") or "No answer."
+                        j = _call_rag_api(ev.get("text", ""))
+                        ans = j.get("answer") or "No answer."
                     except Exception as e:
                         print("[rag] error calling RAG API:", e)
                         ans = "I couldn’t reach the RAG API right now."

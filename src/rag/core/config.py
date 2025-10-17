@@ -35,3 +35,5 @@ class AppConfig:
     bedrock_model: str = os.getenv("BEDROCK_EMBED_MODEL", "amazon.titan-embed-text-v2:0")
     embed_dim: int = int(os.getenv("EMBED_DIM", "1024"))
     use_s3_index: bool = os.getenv("USE_S3_INDEX", "true").lower() == "true"
+
+    

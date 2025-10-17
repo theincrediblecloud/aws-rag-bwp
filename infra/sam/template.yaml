@@ -6,8 +6,6 @@ Parameters:
   ArtifactsBucket:               { Type: String }
   ModelName:                     { Type: String, Default: sentence-transformers/all-MiniLM-L6-v2 }
   IndexPrefix:                   { Type: String, Default: rag/index }
-  FaissKey:                      { Type: String, Default: rag/index/faiss.index }
-  MetaKey:                       { Type: String, Default: rag/index/meta.json }
   SlackSigningSecretArn:         { Type: String }
   SlackBotTokenArn:              { Type: String }
   RagApiUrl:                     { Type: String }
@@ -15,7 +13,7 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.11
-    Architectures: [arm64]  # Use ARM architecture for better performance/cost
+#    Architectures: [arm64]  # Use ARM architecture for better performance/cost
     Timeout: 30
     MemorySize: 2048
     Environment:
@@ -24,11 +22,11 @@ Globals:
         ARTIFACTS_BUCKET: !Ref ArtifactsBucket
         MODEL_NAME: !Ref ModelName
         INDEX_PREFIX: !Ref IndexPrefix
-        FAISS_KEY: !Ref FaissKey
-        META_KEY: !Ref MetaKey
         EMBEDDER_PROVIDER: bedrock
         # AWS_REGION: !Ref AWS::Region
         BEDROCK_REGION: !Ref AWS::Region
+        SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
+        SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
 
 Resources:
   HttpApi:
@@ -43,6 +41,9 @@ Resources:
   RAGApi:
     Type: AWS::Serverless::Function
     Properties:
+      Architectures: [x86_64]
+      PackageType: Zip
+      Runtime: python3.11
       CodeUri: ../../src            # <- your repo's src/
       Handler: rag.api.app.handler
       Policies:
@@ -56,6 +57,15 @@ Resources:
                 - logs:CreateLogStream
                 - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
+                      # ✅ Bedrock invoke permissions
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                # lock to Titan embed model in us-east-1
+                - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
       Events:
         AnyRoute:
           Type: HttpApi
@@ -67,16 +77,17 @@ Resources:
   SlackEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../../handlers       # <- your repo's handlers/
-      Handler: slack_events.handler
-      # CodeUri: ../src          # ← same code root; it will reuse the same deps bundle
-      # Handler: handlers/slack_events.handler
+      Architectures: [arm64]
+      CodeUri: ../../src       # <- your repo's handlers/
+      Handler: handlers.slack_events.handler
       Runtime: python3.11
       MemorySize: 256
       Timeout: 10
       Environment:
         Variables:
           RagApiUrl: !Ref RagApiUrl
+          SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
+          SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
       Policies:
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackBotTokenArn }
@@ -87,6 +98,14 @@ Resources:
                 - logs:CreateLogStream
                 - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                # lock to Titan embed model in us-east-1
+                - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
       Events:
         SlackEventsRoute:
           Type: HttpApi
@@ -102,3 +121,7 @@ Outputs:
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/slack/events"
   ChatApiUrl:
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat"
+  RAGApiFunction:
+    Value: !Ref RAGApi
+  SlackEventsFunction:
+    Value: !Ref SlackEventsFunction
