@@ -1,11 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: RAG FastAPI + Slack (no layers)
+Description: RAG API + Slack (production)
 
 Parameters:
   ArtifactsBucket:               { Type: String }
   ModelName:                     { Type: String, Default: sentence-transformers/all-MiniLM-L6-v2 }
   IndexPrefix:                   { Type: String, Default: rag/index }
+  FaissKey:                      { Type: String, Default: rag/index/faiss.index }
+  MetaKey:                       { Type: String, Default: rag/index/meta.json }
   SlackSigningSecretArn:         { Type: String }
   SlackBotTokenArn:              { Type: String }
   RagApiUrl:                     { Type: String }
@@ -22,30 +24,14 @@ Globals:
         ARTIFACTS_BUCKET: !Ref ArtifactsBucket
         MODEL_NAME: !Ref ModelName
         INDEX_PREFIX: !Ref IndexPrefix
+        FAISS_KEY: !Ref FaissKey
+        META_KEY: !Ref MetaKey
         EMBEDDER_PROVIDER: bedrock
-        # AWS_REGION: !Ref AWS::Region
         BEDROCK_REGION: !Ref AWS::Region
         SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
         SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
 
 Resources:
-  # Build a pure NumPy layer for arm64 Py3.11
-  NumpyLayer:
-    Type: AWS::Serverless::LayerVersion
-    Properties:
-      LayerName: numpy-1264-arm64
-      ContentUri: ../../infra/layers/numpy   # <-- path on disk (see section B)
-      CompatibleRuntimes: [python3.11]
-      CompatibleArchitectures: [arm64]
-      RetentionPolicy: Delete
-    Metadata:
-      BuildMethod: python3.11
-      BuildArchitecture: arm64
-      BuildProperties:
-        Commands:
-          # put site-packages under /opt/python so Lambda can import it
-          - pip install -r requirements.txt -t "$LAMBDA_TASK_ROOT/python"
-
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -60,8 +46,10 @@ Resources:
     Properties:
       CodeUri: ../../src            # <- your repo's src/
       Handler: rag.api.app.handler
+      MemorySize: 2048
+      Timeout: 30
       Layers:
-        - !Ref NumpyLayer         # <---- add the layer
+        - arn:aws:lambda:us-east-1:471112701253:layer:numpy-1264-arm64:9  # <- replace with your layer ARN
       Policies:
         - S3ReadPolicy: { BucketName: !Ref ArtifactsBucket }
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
@@ -95,10 +83,9 @@ Resources:
     Properties:
       CodeUri: ../../src       # <- your repo's handlers/
       Handler: handlers.slack_events.handler
-      Layers:
-        - !Ref NumpyLayer         # <---- add the layer
       MemorySize: 256
       Timeout: 10
+      Layers: []
       Environment:
         Variables:
           RagApiUrl: !Ref RagApiUrl
@@ -132,11 +119,11 @@ Resources:
 
 Outputs:
   ApiBaseUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${HttpApi.Stage}"
   SlackEventsUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/slack/events"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/{HttpApi.Stage}/slack/events"
   ChatApiUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/{HttpApi.Stage}/chat"
   RAGApiFunction:
     Value: !Ref RAGApi
   SlackEventsFunction:

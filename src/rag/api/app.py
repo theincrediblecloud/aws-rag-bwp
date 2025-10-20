@@ -1,13 +1,12 @@
 # src/rag/api/app.py
 import os, json, base64, traceback
-import numpy as np
 
 # --- env/config (cloud defaults) ---
-APP_ENV         = os.getenv("APP_ENV", "prod")
-EMBED_PROVIDER  = os.getenv("EMBEDDER_PROVIDER", "bedrock").lower()  # keep name consistent
-AWS_REGION      = os.getenv("AWS_REGION", "us-east-1")
-ARTIFACTS_BUCKET= os.getenv("ARTIFACTS_BUCKET", "")
-INDEX_PREFIX    = os.getenv("INDEX_PREFIX", "rag/index")
+APP_ENV          = os.getenv("APP_ENV", "prod")
+# accept either var; default to bedrock in Lambda
+EMBED_PROVIDER   = (os.getenv("EMBEDDER_PROVIDER") or os.getenv("EMBED_PROVIDER") or "bedrock").lower()
+AWS_REGION       = os.getenv("AWS_REGION", "us-east-1")
+SNIPPET_CHARS     = int(os.getenv("SNIPPET_CHARS", "400"))  # was 180
 
 # --- RAG bootstrap (lazy so we never crash on import) ---
 _rag_ready   = False
@@ -15,69 +14,77 @@ _rag_error   = None
 _run_chat_fn = None
 
 def _init_rag():
-    """Build the run_chat callable. On failure, capture a friendly error for /health and /chat."""
+    """
+    Build the run_chat callable. On any failure, record _rag_error and keep the API up.
+    """
     global _rag_ready, _rag_error, _run_chat_fn
     if _run_chat_fn is not None or _rag_ready:
         return
+
     try:
         from rag.core.config import AppConfig
         from rag.core import retriever
-        from rag.adapters.vs_numpy import NumpyStore  # <- NumPy store only
-
         cfg = AppConfig()
 
-        # Embeddings: Bedrock in Lambda; allow optional local only if explicitly requested
-        if EMBED_PROVIDER == "bedrock":
+        # Choose embedder
+        if os.getenv("EMBEDDER_PROVIDER", "bedrock").lower() == "bedrock":
             from rag.adapters.embeddings_bedrock import BedrockEmbedder as Embedder
             embedder = Embedder(
                 model_id=os.getenv("BEDROCK_EMBED_MODEL", "amazon.titan-embed-text-v2:0"),
-                region=AWS_REGION,
+                region=os.getenv("AWS_REGION", "us-east-1"),
             )
         else:
-            # LOCAL ONLY (won’t be used in Lambda unless you set EMBEDDER_PROVIDER=local)
             from rag.adapters.embeddings_local import LocalEmbedder as Embedder
             embedder = Embedder(cfg.model_name, local_dir=cfg.model_local_dir)
 
-        # Vector store: NumPy (vectors.npy + meta.jsonl in s3://bucket/prefix/)
-        vec = NumpyStore(local_vec_path="/tmp/vectors.npy",
-                           local_meta_path="/tmp/meta.jsonl")
-        vec.ensure(bucket=ARTIFACTS_BUCKET or cfg.s3_bucket, prefix=INDEX_PREFIX or cfg.index_prefix)
+        # Vector store (NumPy; via Lambda Layer)
+        try:
+            from rag.adapters.vs_numpy import NumpyStore as VectorStore
+        except ImportError as ie:
+            VectorStore = None
+            raise RuntimeError("NumpyStore not available") from ie
+        
+        vector = VectorStore(cfg.index_path, cfg.meta_path)
+        vector.ensure(bucket=cfg.s3_bucket, prefix=getattr(cfg, "index_prefix", None))
+        _vs_mode = "numpy"
 
         def run_chat(user_msg: str, session_id: str = "cloud", domain: str | None = None):
             q_user = (user_msg or "").strip()
             if not q_user:
-                return {
-                    "answer": "Hi! Try asking a question (e.g., “summarize FAM moderation solution”).",
-                    "citations": [], "session_id": session_id, "domain": domain
-                }
+                return {"answer": "Ask me something, e.g., “summarize FAM moderation solution?”.",
+                        "citations": [], "session_id": session_id, "domain": domain}
 
-            #q_text = retriever.condense_query([], q_user) or q_user
-            q_vec = embedder.embed([q_user])[0]               # -> list[float]
-            hits  = vec.search(q_vec, k=24)                  # -> list[dict]
+            # (Keep it NumPy-free here)
+            q_vec = embedder.embed([q_user])[0]
+            norm = (sum(x*x for x in q_vec) ** 0.5) or 1.0
+            q_norm = [float(x / norm) for x in q_vec]
 
+            hits = vector.search(q_norm, k=24)
             if not hits:
-                return {
-                    "answer": "I couldn’t find supporting passages yet. Try terms like “Oberon”, “FRE”, or broaden the query.",
-                    "citations": [], "session_id": session_id, "domain": domain
-                }
+                return {"answer": "I couldn’t find relevant passages yet.",
+                        "citations": [], "session_id": session_id, "domain": domain}
 
             top = hits[:3]
             bullets = []
             for i, h in enumerate(top, 1):
-                txt = (h.get("chunk_text") or h.get("title") or "").strip().replace("\n", " ")
-                if len(txt) > 180: txt = txt[:180].rstrip() + "…"
+                txt = (h.get("chunk_text") or h.get("text") or h.get("title") or "").replace("\n", " ").strip()
+                if len(txt) > SNIPPET_CHARS: txt = txt[:SNIPPET_CHARS].rstrip() + "…"
                 bullets.append(f"- {txt} [^{i}]")
-
-            answer = "**High-level:** Retrieved relevant passages.\n\n" + "\n".join(bullets)
-            citations = [{
-                "idx": i + 1,
-                "title": h.get("title"),
-                "source_path": h.get("source_path"),
-                "page": h.get("page"),
-                "score": h.get("score"),
-                "chunk_text": h.get("chunk_text"),
-            } for i, h in enumerate(top)]
-
+            answer = (
+                "*High-level:* I found relevant passages.\n\n"
+                + "\n\n".join(bullets)
+                + "\n\n_Reply `more` for additional excerpts or `sources` to list all citations._"
+            )
+            citations = []
+            for i, h in enumerate(top):
+                citations.append({
+                    "idx": i + 1,
+                    "title": h.get("title"),
+                    "source_path": h.get("source_path") or h.get("source") or h.get("url"),
+                    "page": h.get("page"),
+                    "score": h.get("score"),
+                    "chunk_text": h.get("chunk_text") or h.get("text"),
+                })
             return {"answer": answer, "citations": citations, "session_id": session_id, "domain": domain}
 
         _run_chat_fn = run_chat
@@ -94,7 +101,7 @@ def _json(status: int, body: dict, headers: dict | None = None):
 
 def handler(event, context):
     """
-    API Gateway HTTP API (v2) router—no FastAPI/Starlette.
+    API Gateway HTTP API (v2) router
       GET  /health
       POST /chat   {"user_msg": "...", "session_id":"...", "domain": null}
     """
@@ -144,3 +151,4 @@ def handler(event, context):
         import logging, traceback as tb
         logging.getLogger("rag.api").error("[api] unhandled error\n%s", tb.format_exc())
         return _json(500, {"message": "Internal Server Error"})
+    
