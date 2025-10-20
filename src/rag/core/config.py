@@ -14,7 +14,7 @@ class AppConfig:
     s3_bucket: str  = os.getenv("ARTIFACTS_BUCKET", "")
     index_prefix: str = os.getenv("INDEX_PREFIX", "rag/index")
     meta_key: str     = os.getenv("META_KEY", "rag/index/meta.json")
-    faiss_key: str    = os.getenv("FAISS_KEY", "rag/index/faiss.index")
+    #faiss_key: str    = os.getenv("FAISS_KEY", "rag/index/faiss.index")
 
     # Slack secrets (stored as Secrets Manager ARNs)
     slack_signing_secret_arn: str = os.getenv("SLACK_SIGNING_SECRET_ARN", "")
@@ -25,8 +25,9 @@ class AppConfig:
 
     # Computed local paths (Lambda’s /tmp)
     index_dir: str = os.getenv("INDEX_DIR", "/tmp/index")
-    index_path: str = os.path.join(index_dir, "faiss.index")
-    meta_path: str  = os.path.join(index_dir, "meta.json")
+    index_path: str = os.path.join(index_dir, "vectors.npy")
+    #index_path: str = os.path.join(index_dir, "faiss.index")
+    meta_path: str  = os.path.join(index_dir, "meta.jsonl")
 
     # Embedding provider and related configs
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")
@@ -35,3 +36,8 @@ class AppConfig:
     bedrock_model: str = os.getenv("BEDROCK_EMBED_MODEL", "amazon.titan-embed-text-v2:0")
     embed_dim: int = int(os.getenv("EMBED_DIM", "1024"))
     use_s3_index: bool = os.getenv("USE_S3_INDEX", "true").lower() == "true"
+    chunk_size: int = int(os.getenv("CHUNK_SIZE", "500"))
+    SNIPPET_CHARS = int(os.getenv("SNIPPET_CHARS", "600"))  # was 180
+    chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "50"))
+
+    

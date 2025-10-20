@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: RAG FastAPI + Slack (no layers)
+Description: RAG API + Slack (production)
 
 Parameters:
   ArtifactsBucket:               { Type: String }
@@ -27,8 +27,9 @@ Globals:
         FAISS_KEY: !Ref FaissKey
         META_KEY: !Ref MetaKey
         EMBEDDER_PROVIDER: bedrock
-        # AWS_REGION: !Ref AWS::Region
         BEDROCK_REGION: !Ref AWS::Region
+        SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
+        SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
 
 Resources:
   HttpApi:
@@ -45,6 +46,10 @@ Resources:
     Properties:
       CodeUri: ../../src            # <- your repo's src/
       Handler: rag.api.app.handler
+      MemorySize: 2048
+      Timeout: 30
+      Layers:
+        - arn:aws:lambda:us-east-1:471112701253:layer:numpy-1264-arm64:9  # <- replace with your layer ARN
       Policies:
         - S3ReadPolicy: { BucketName: !Ref ArtifactsBucket }
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
@@ -56,6 +61,15 @@ Resources:
                 - logs:CreateLogStream
                 - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
+                      # ✅ Bedrock invoke permissions
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                # lock to Titan embed model in us-east-1
+                - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
       Events:
         AnyRoute:
           Type: HttpApi
@@ -67,16 +81,16 @@ Resources:
   SlackEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../../handlers       # <- your repo's handlers/
-      Handler: slack_events.handler
-      # CodeUri: ../src          # ← same code root; it will reuse the same deps bundle
-      # Handler: handlers/slack_events.handler
-      Runtime: python3.11
+      CodeUri: ../../src       # <- your repo's handlers/
+      Handler: handlers.slack_events.handler
       MemorySize: 256
       Timeout: 10
+      Layers: []
       Environment:
         Variables:
           RagApiUrl: !Ref RagApiUrl
+          SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
+          SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
       Policies:
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
         - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackBotTokenArn }
@@ -87,6 +101,14 @@ Resources:
                 - logs:CreateLogStream
                 - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                # lock to Titan embed model in us-east-1
+                - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
       Events:
         SlackEventsRoute:
           Type: HttpApi
@@ -97,8 +119,12 @@ Resources:
 
 Outputs:
   ApiBaseUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${HttpApi.Stage}"
   SlackEventsUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/slack/events"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/{HttpApi.Stage}/slack/events"
   ChatApiUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/{HttpApi.Stage}/chat"
+  RAGApiFunction:
+    Value: !Ref RAGApi
+  SlackEventsFunction:
+    Value: !Ref SlackEventsFunction
