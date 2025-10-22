@@ -3,19 +3,31 @@ Transform: AWS::Serverless-2016-10-31
 Description: RAG API + Slack (production)
 
 Parameters:
-  ArtifactsBucket:               { Type: String }
-  ModelName:                     { Type: String, Default: sentence-transformers/all-MiniLM-L6-v2 }
-  IndexPrefix:                   { Type: String, Default: rag/index }
-  FaissKey:                      { Type: String, Default: rag/index/faiss.index }
-  MetaKey:                       { Type: String, Default: rag/index/meta.json }
-  SlackSigningSecretArn:         { Type: String }
-  SlackBotTokenArn:              { Type: String }
-  RagApiUrl:                     { Type: String }
+  ArtifactsBucket:
+    Type: String
+  ModelName:
+    Type: String
+    Default: sentence-transformers/all-MiniLM-L6-v2
+  IndexPrefix:
+    Type: String
+    Default: rag/index
+  FaissKey:
+    Type: String
+    Default: rag/index/faiss.index
+  MetaKey:
+    Type: String
+    Default: rag/index/meta.json
+  SlackSigningSecretArn:
+    Type: String
+  SlackBotTokenArn:
+    Type: String
+  RagApiUrl:
+    Type: String
 
 Globals:
   Function:
     Runtime: python3.11
-    Architectures: [arm64]  # Use ARM architecture for better performance/cost
+    Architectures: [arm64]
     Timeout: 30
     MemorySize: 2048
     Environment:
@@ -28,8 +40,17 @@ Globals:
         META_KEY: !Ref MetaKey
         EMBEDDER_PROVIDER: bedrock
         BEDROCK_REGION: !Ref AWS::Region
+        BEDROCK_MODEL: amazon.titan-embed-text-v2:0
         SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
         SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
+        LLM_PROVIDER: bedrock
+       # LLM_MODEL_ID: anthropic.claude-haiku-4-5-20251001-v1:0
+        LLM_INFERENCE_PROFILE_ARN: arn:aws:bedrock:us-east-1:471112701253:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
+        CHUNK_SIZE: "500"
+        CHUNK_OVERLAP: "50"
+        SNIPPET_CHARS: "800"
+        TOP_K: "8"
+        MAX_TOKENS: "500"
 
 Resources:
   HttpApi:
@@ -41,35 +62,76 @@ Resources:
         AllowHeaders: ["*"]
         AllowOrigins: ["*"]
 
+  # IAM Role for RAGApi
+  RAGApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RAGApiLogging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+        - PolicyName: RAGApiBedrock
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
+                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-*
+                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-text-*
+                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
+                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/*
+
+        - PolicyName: ReadVectors
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactsBucket}
+                  - !Sub arn:aws:s3:::${ArtifactsBucket}/${IndexPrefix}/*
+        - PolicyName: RAGApiSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SlackSigningSecretArn
+                  - !Ref SlackBotTokenArn
+
   RAGApi:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../../src            # <- your repo's src/
+      CodeUri: ../../src
       Handler: rag.api.app.handler
       MemorySize: 2048
       Timeout: 30
+      Role: !GetAtt RAGApiRole.Arn
       Layers:
-        - arn:aws:lambda:us-east-1:471112701253:layer:numpy-1264-arm64:9  # <- replace with your layer ARN
-      Policies:
-        - S3ReadPolicy: { BucketName: !Ref ArtifactsBucket }
-        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
-        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackBotTokenArn }
-        - Statement:
-            - Effect: Allow
-              Action:
-                - logs:CreateLogGroup
-                - logs:CreateLogStream
-                - logs:PutLogEvents
-              Resource: arn:aws:logs:*:*:*
-                      # ✅ Bedrock invoke permissions
-        - Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-                - bedrock:InvokeModelWithResponseStream
-              Resource:
-                # lock to Titan embed model in us-east-1
-                - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
+        - arn:aws:lambda:us-east-1:471112701253:layer:numpy-1264-arm64:9
       Events:
         AnyRoute:
           Type: HttpApi
@@ -78,37 +140,68 @@ Resources:
             Path: /{proxy+}
             Method: ANY
 
+  # IAM Role for SlackEventsFunction
+  SlackEventsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SlackEventsLogging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+        - PolicyName: SlackEventsBedrock
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
+                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-*
+                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-text-*
+                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
+                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
+                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/*
+        - PolicyName: SlackEventsSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SlackSigningSecretArn
+                  - !Ref SlackBotTokenArn          
+
   SlackEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../../src       # <- your repo's handlers/
+      CodeUri: ../../src
       Handler: handlers.slack_events.handler
       MemorySize: 256
       Timeout: 10
+      Role: !GetAtt SlackEventsRole.Arn
       Layers: []
       Environment:
         Variables:
           RagApiUrl: !Ref RagApiUrl
           SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
           SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
-      Policies:
-        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackSigningSecretArn }
-        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref SlackBotTokenArn }
-        - Statement:
-            - Effect: Allow
-              Action:
-                - logs:CreateLogGroup
-                - logs:CreateLogStream
-                - logs:PutLogEvents
-              Resource: arn:aws:logs:*:*:*
-        - Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-                - bedrock:InvokeModelWithResponseStream
-              Resource:
-                # lock to Titan embed model in us-east-1
-                - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
       Events:
         SlackEventsRoute:
           Type: HttpApi
@@ -121,9 +214,9 @@ Outputs:
   ApiBaseUrl:
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${HttpApi.Stage}"
   SlackEventsUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/{HttpApi.Stage}/slack/events"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${HttpApi.Stage}/slack/events"
   ChatApiUrl:
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/{HttpApi.Stage}/chat"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${HttpApi.Stage}/chat"
   RAGApiFunction:
     Value: !Ref RAGApi
   SlackEventsFunction:

@@ -32,12 +32,18 @@ class AppConfig:
     # Embedding provider and related configs
     aws_region: str = os.getenv("AWS_REGION", "us-east-1")
     embed_provider: str = os.getenv("EMBED_PROVIDER", "bedrock")  # bedrock | local
-    bedrock_region: str = os.getenv("BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))
-    bedrock_model: str = os.getenv("BEDROCK_EMBED_MODEL", "amazon.titan-embed-text-v2:0")
+    bedrock_region: str = os.getenv("BEDROCK_REGION", "us-east-1")
+    bedrock_model: str = os.getenv("BEDROCK_EMBEDDING_MODEL", "amazon.titan-embed-text-v2:0")
     embed_dim: int = int(os.getenv("EMBED_DIM", "1024"))
     use_s3_index: bool = os.getenv("USE_S3_INDEX", "true").lower() == "true"
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "500"))
-    SNIPPET_CHARS = int(os.getenv("SNIPPET_CHARS", "600"))  # was 180
+    SNIPPET_CHARS = int(os.getenv("SNIPPET_CHARS", "800"))  # was 180
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "50"))
+    llm_provider: str = os.getenv("LLM_PROVIDER", "bedrock")  # bedrock | local
+    #llm_model_id: str = os.getenv("LLM_MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0").strip()
+    max_tokens: int = int(os.getenv("MAX_TOKENS", "500"))
+    temperature: float = float(os.getenv("TEMPERATURE", "0.2"))
+    llm_inference_profile_arn: str = os.getenv("LLM_INFERENCE_PROFILE_ARN", "").strip()
+
 
     
