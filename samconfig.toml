@@ -1,7 +1,7 @@
 version = 0.1
 
 [default.deploy.parameters]
-stack_name = "slack-rag-prod"
+stack_name = "slack-rag-prod-v2"
 region = "us-east-1"
 capabilities = "CAPABILITY_IAM"
 resolve_s3 = true
@@ -10,7 +10,7 @@ template_file = "infra/sam/template.yaml"
 
 parameter_overrides = [
   "ArtifactsBucket=slack-rag-artifacts-73918652",
-  "RagApiUrl=https://nrve9ej215.execute-api.us-east-1.amazonaws.com/Prod/chat",
+  "RagApiUrl=https://mg3ce5q54g.execute-api.us-east-1.amazonaws.com/Prod/chat",
   "SlackBotTokenArn=arn:aws:secretsmanager:us-east-1:471112701253:secret:rag/slack/bot_token-tZy5lT",
   "SlackSigningSecretArn=arn:aws:secretsmanager:us-east-1:471112701253:secret:slack/signing-secret-n7WDeM"
 ]
