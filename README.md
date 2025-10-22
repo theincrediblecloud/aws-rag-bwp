@@ -13,116 +13,63 @@ uvicorn rag.api.app:app --reload --port 8000 --app-dir src
 
 ### Test
 ```bash
-curl -s http://localhost:8000/health | jq
-curl -s -X POST http://localhost:8000/chat \
- -H 'Content-Type: application/json' \
- -d '{"user_msg":"What does the document say about 3DS challenges?","session_id":"dev"}' | jq
+## ragbot — local RAG proof-of-concept
+
+Lightweight Retrieval-Augmented-Generation (RAG) proof-of-concept for local use. Ingest local documents (PDF/DOCX/TXT/MD), build a local vector store and metadata, then run an HTTP API that answers questions with short, cited passages.
+
+Project metadata
+- Name: ragbot
+- Version: 0.1.0
+- Python: 3.10+
+
+Repository layout (important files)
+
 ```
-
-## Demo
-```bash
-python golden/eval_golden.py --api http://127.0.0.1:8000/chat golden/fam.jsonl
-```
-
-## Notes
-
-
----
-
-### Secure RAG — FAM MVP (Local)
-
-A tiny, production-feeling RAG for FAM docs with:
-Local embeddings + FAISS (no public LLM)
-Clear citations (cite-or-silence)
-Golden set evaluation (Hit@k & citation presence)
-Optional Slack /ask command
-
-## Prereqs
-
-Python 3.10–3.12 (3.13 works if your wheels installed)
-macOS/Linux
-(Optional) jq, pandoc for convenience
-    ```bash
-    python -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
-    ```
-## Project layout
 repo-root/
-├─ data/
-│  ├─ pdfs/                # raw PDFs
-│  ├─ word/                # raw DOCX/MD/TXT
-│  ├─ text_files/
-│  └─ collections/
-│     └─ fam/              # ✅ symlinks to only FAM sources
-├─ golden/
-│  ├─ fam.jsonl            # ✅ FAM golden set
-│  └─ eval_golden.py       # eval runner
-├─ src/
-│  └─ rag/
-│     ├─ api/app.py        # FastAPI /chat, /health
-│     ├─ core/config.py    # AppConfig (env/paths)
-│     ├─ ingest/pipeline.py
-│     ├─ adapters/
-│     │  ├─ vs_faiss.py    # FAISS store (search, upsert)
-│     │  └─ embeddings_local.py
-│     └─ ingest/loaders.py # file loaders
-└─ store/                  # ✅ local index dir (faiss.index, meta.jsonl)
-
-
-Tip: add store/ to .gitignore.
-
-## Environment knobs
-
-Create .env (or export in shell):
-
-APP_ENV=local
-INDEX_DIR=store
-
-# retrieval
-EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
-EMBED_DIM=384
-CHUNK_SIZE=600
-CHUNK_OVERLAP=80
-TOP_K=8
-
-# (optional) behavior toggles you may already support
-ANSWER_MODE=simple        # simple | smart
-
-
-Load env in your shell:
-    ```bash
-    export $(grep -v '^#' .env | xargs) 2>/dev/null || true
-    export PYTHONPATH=$PWD/src
-    ```
-## Prepare the FAM collection
-
-Symlink only the FAM sources you want included:
-```bash
-mkdir -p data/collections/fam
-
-ln -sf ../../pdfs/FAM\ Moderation\ System\ Design.pdf              data/collections/fam/FAM-Moderation-System-Design.pdf
-ln -sf ../../pdfs/FAM\ Moderation\ Solution\ Discussion.pdf        data/collections/fam/FAM-Moderation-Solution-Discussion.pdf
-ln -sf "../../word/FAM Team_ Monitoring & Moderation PRFAQ.docx"   data/collections/fam/FAM-PRFAQ.docx
-ln -sf ../../pdfs/\[SantosDesign\]\ Santos\ Catalog\ Moderation.pdf data/collections/fam/Santos-Catalog-Moderation.pdf
+├─ data/                    # raw sources (pdfs, word, text_files) and collections/
+├─ golden/                  # golden sets and evaluation runner
+├─ src/rag/                 # python package (application code)
+│  ├─ api/app.py            # Lambda + FastAPI handlers (/health, /chat)
+│  ├─ core/config.py        # configuration and env parsing
+│  ├─ ingest/pipeline.py    # ingest pipeline to build vectors/meta
+│  └─ adapters/             # embedding + vector store adapters
+├─ store/                   # local index artifacts (faiss.index, meta.jsonl, vectors.npy)
+├─ pyproject.toml           # project metadata
+└─ requirements.txt         # (optional) pinned deps for local venv
 ```
-If DOCX retrieval seems weak, convert PRFAQ to Markdown or TXT and re-link:
+
+Quickstart (local, minimal)
+
+1. Create and activate a virtualenv
+
 ```bash
-pandoc "data/word/FAM Team_ Monitoring & Moderation PRFAQ.docx" -o "data/word/FAM-PRFAQ.md"
-ln -sf ../../word/FAM-PRFAQ.md data/collections/fam/FAM-PRFAQ.md
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
-## Build index (clean) for FAM
-# wipe current index then ingest only FAM
+
+2. Prepare env and PYTHONPATH
+
 ```bash
-rm -rf "$INDEX_DIR"/*
+cp .env.example .env
+export $(grep -v '^#' .env | xargs) 2>/dev/null || true
+export PYTHONPATH=$PWD/src
+```
+
+3. Add or symlink a collection of documents to `data/collections/<name>` (example: `fam`) and ingest
+
+```bash
 python -m rag.ingest.pipeline --data-dir data/collections/fam --fresh
-ls -l store/   # expect: faiss.index, meta.jsonl
 ```
-## Run API + smoke tests
+
+4. Run the API (development)
+
 ```bash
 uvicorn rag.api.app:app --reload --port 8000 --app-dir src
 ```
-# new terminal
+
+5. Smoke test
+
 ```bash
 curl -s http://127.0.0.1:8000/health | jq .
 curl -s -X POST http://127.0.0.1:8000/chat \
@@ -130,98 +77,91 @@ curl -s -X POST http://127.0.0.1:8000/chat \
   -d '{"user_msg":"What is the primary purpose of the FAM Moderation system?"}' | jq .
 ```
 
-You should see answers with 1–3 citations (title, file, page).
+Evaluation (golden set)
 
-## Evaluate with golden set
+The `golden/` folder contains evaluation helpers and JSONL golden data tailored to example collections. Run the evaluator against a running API:
 
-Golden set lives at golden/fam.jsonl (already tailored to your FAM files).
 ```bash
 python golden/eval_golden.py --api http://127.0.0.1:8000/chat golden/fam.jsonl -v
 ```
-Targets (MVP):
-    Hit@5 ≥ 80–90%
-    Citation present ≥ 95–100%
 
-## Slack (optional MVP)
+Typical targets (project-defined)
+- Hit@5: 80–90%
+- Citation present: 95–100%
 
-Fastest path is a Lambda Function URL hitting your API then posting to Slack via response_url.
-Create the Slack app (slash command /ask) and note Signing Secret.
-Deploy infra/lambda_slack_handler.py to AWS Lambda (Python 3.11).
-    Env vars:
-        RAG_API=https://<your-api>/chat
-        SLACK_SIGNING_SECRET=<from Slack>
+Embedding & vector-store choices
 
-Create a Function URL (auth: NONE) and paste that URL into the Slash Command → Request URL.
-Test in Slack:
-/ask Summarize the FAM moderation architecture
+- Local embeddings: `sentence-transformers/all-MiniLM-L6-v2` is the default (384 dim).
+- Vector store: FAISS (native) or numpy-backed store (used for simplified Lambda deployment). See `src/rag/adapters/` for implementations: `embeddings_local.py`, `vs_numpy.py`.
 
-If your /chat is slower than ~2–3s, keep the handler’s “delayed response” pattern (ACK fast, post later via response_url).
+Environment knobs (example `.env`)
 
-## Common commands (cheat-sheet)
-# activate venv
-source .venv/bin/activate
+APP_ENV=local
+INDEX_DIR=store
+EMBED_MODEL=sentence-transformers/all-MiniLM-L6-v2
+EMBED_DIM=384
+CHUNK_SIZE=600
+CHUNK_OVERLAP=80
+TOP_K=8
 
-# export env
-```bash
-export $(grep -v '^#' .env | xargs) 2>/dev/null || true
-export PYTHONPATH=$PWD/src
+Tips for working locally
 
-# rebuild FAM index from scratch
-rm -rf "$INDEX_DIR"/*
-python -m rag.ingest.pipeline --data-dir data/collections/fam --fresh
+- Ensure `PYTHONPATH=$PWD/src` so `import rag` works when running modules directly.
+- If you prefer, install the package in editable mode: `pip install -e .` then run modules without `--app-dir` hacks.
+- Keep `store/` out of version control; it contains generated index files.
 
-# run API
-uvicorn rag.api.app:app --reload --port 8000 --app-dir src
+Slack integration (optional)
 
-# health & sample question
-curl -s http://127.0.0.1:8000/health | jq .
-curl -s -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
-  -d '{"user_msg":"Which external services does Santos Catalog Moderation depend on?"}' | jq .
+There is an example Lambda handler to forward Slack /ask commands to the running RAG API. See `infra/lambda_slack_handler.py` and `infra/sam/template.yaml` for deployment hints. Typical flow:
 
-# run evaluation
-python golden/eval_golden.py --api http://127.0.0.1:8000/chat golden/fam.jsonl
+- Create Slack app with a Slash Command `/ask` and a Signing Secret.
+- Deploy Lambda behind a Function URL or API Gateway that forwards the command to this repo's `/chat` endpoint.
+
+Deployment (AWS SAM)
+
+The repo contains SAM resources in `infra/sam/template.yaml` and helper scripts. The Lambda entrypoint is `rag.api.app.handler`. Secrets should be provided via Secrets Manager with least-privilege IAM policies.
+
+Troubleshooting
+
+- "ModuleNotFoundError: rag": make sure `PYTHONPATH=./src` or install the package editable.
+- If you see `AttributeError: 'list' object has no attribute 'astype'` from `vs_numpy`, ensure embeddings are passed as numeric arrays or lists are converted; `vs_numpy.search` accepts list inputs.
+- If the evaluator complains about missing `golden_set.jsonl`, point it to the correct golden file under `golden/` or generate a small placeholder to test.
+
+Contributing and tests
+
+- Add new collections under `data/collections/` and corresponding golden sets under `golden/`.
+- Keep ingest and evaluation deterministic where possible; changes to chunking or embedding models should be reflected in the golden set.
+
+License
+
+See `LICENSE` at the repo root.
+
+Acknowledgements
+
+This project is a compact demo to explore local RAG, citation-first behavior, and simple evaluation workflows.
+
+---
+Generated from repository metadata and existing documentation.
+
+Sample response (what /chat returns)
+
+```json
+{
+  "answer": "High-level: Retrieved relevant passages.\n- ...",
+  "citations": [
+    {"idx": 1, "title": "FAM-Moderation-System-Design.pdf", "source_path": "data/collections/fam/FAM-Moderation-System-Design.pdf", "page": 12, "score": 0.92, "chunk_text": "...extracted snippet..."}
+  ],
+  "session_id": "test",
+  "domain": null
+}
 ```
-## Troubleshooting
 
-Connection refused
-    Start API: uvicorn …
-    Use 127.0.0.1 not localhost if you see socket issues.
-Wrong/duplicate citations
-    Ensure both ingest and API print:
-    "[INFO] Ingest writing index to: …/store" and "[INFO] API using index dir: …/store"
-    ```bash
-    Clean rebuild: rm -rf store/* && python -m … --fresh
-    ```
-PRFAQ never retrieved
-    Convert DOCX → MD/TXT, re-link in data/collections/fam/, re-ingest.
-    Keep golden entries that accept either FAM-PRFAQ.md or FAM-PRFAQ.docx.
-FAISS path TypeError
-    Ensure vs_faiss.py uses os.fspath(path) for read_index/write_index and open().
+Try it
 
-## Quality policy (MVP)
-Citations are required. If no grounding found, answer should hedge/refuse.
-Golden set gates: no change promoted unless Hit@5 and citation presence meet targets.
+Start the API and run the smoke test:
 
-## Demo script (2–3 minutes)
-“This is a local RAG over FAM docs—no public LLM.”
-Show /health and point out env, index_size, model.
-Ask 2–3 questions via /chat (or Slack /ask) and highlight citations.
-Run the golden eval: python golden/eval_golden.py … → call out Hit@5 and cite %.
-Explain refresh: python -m rag.ingest.pipeline --data-dir data/collections/fam --fresh.
+```bash
+uvicorn rag.api.app:app --reload --port 8000 --app-dir src
+./tests/smoke_test.sh
+```
 
-## make file
-make fresh       # wipe + ingest FAM
-make run         # start API
-make health      # check /health
-make chat        # sample query
-make eval        # run golden set
-
-
-## Notes
-- store/ is your single source of truth (index + metadata). Don’t commit it.
-- To add Onboarding later, create data/collections/onboarding/, ingest that directory, and use a separate golden set.
-- Embeddings: `sentence-transformers/all-MiniLM-L6-v2` (local, 384‑dim)
-- Vector store: FAISS (L2/cosine). Index + metadata saved under `store/`.
-- Chunking: word-based approx (size 900, overlap 60). Tweak via `.env`.
-- Citations: each answer includes top‑k chunk sources with doc title + page/section when available.
-- No LLM generation (to keep costs $0). The `/chat` endpoint composes a grounded answer by stitching top chunks (simple heuristic). Swap with your LLM later if desired.

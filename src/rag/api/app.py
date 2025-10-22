@@ -2,6 +2,15 @@
 import  base64
 import rag.core.config as config
 import boto3, os, logging, json, traceback
+
+try:
+    # FastAPI is optional for Lambda handler usage; if present, expose ASGI app for local dev
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+except Exception:
+    FastAPI = None  # type: ignore
+    Request = None  # type: ignore
+    JSONResponse = None  # type: ignore
 # --- env/config ---
 config = config.AppConfig()
 APP_ENV          = config.app_env.lower()
@@ -83,7 +92,21 @@ def _init_rag():
 
         from rag.adapters.vs_numpy import NumpyStore
         vector = NumpyStore(cfg.index_path, cfg.meta_path)
-        vector.ensure(bucket=cfg.s3_bucket, prefix=cfg.index_prefix)
+
+        # Respect explicit configuration for S3-backed index vs local index
+        if cfg.use_s3_index:
+            # In production, require a valid bucket to avoid silent misconfiguration
+            if not cfg.s3_bucket:
+                raise ValueError(
+                    "USE_S3_INDEX is true but ARTIFACTS_BUCKET (s3_bucket) is not set. "
+                    "Set ARTIFACTS_BUCKET to your S3 bucket or set USE_S3_INDEX=false for local dev."
+                )
+            print(f"[vectors] using S3 bucket={cfg.s3_bucket} prefix={cfg.index_prefix}")
+            vector.ensure(bucket=cfg.s3_bucket, prefix=cfg.index_prefix)
+        else:
+            print(f"[vectors] USE_S3_INDEX=false -> loading local index from: {cfg.index_path}, {cfg.meta_path}")
+            # pass empty bucket so NumpyStore will attempt local load
+            vector.ensure(bucket="", prefix=cfg.index_prefix)
 
         def _normalize(v):
             # safe L2 normalize -> list[float]
@@ -248,3 +271,34 @@ def handler(event, context):
         import logging
         logging.getLogger("rag.api").error("[api] unhandled error\n%s", traceback.format_exc())
         return _json(500, {"message": "Internal Server Error"})
+
+
+# --- optional ASGI app for local development (uvicorn) ---
+if FastAPI is not None:
+    app = FastAPI()
+
+    @app.get("/health")
+    async def _health():
+        _init_rag()
+        resp = {"ok": True, "rag_ready": _rag_ready}
+        if not _rag_ready and _rag_error:
+            resp["error"] = f"RAG back-end not initialized: {_rag_error}"
+        return JSONResponse(status_code=200, content=resp)
+
+    @app.post("/chat")
+    async def _chat(request):
+        _init_rag()
+        if not _rag_ready or _run_chat_fn is None:
+            return JSONResponse(status_code=200, content={
+                "answer": f"(stub) RAG back-end not initialized: {_rag_error or 'unknown'}",
+                "citations": [], "session_id": "cloud", "domain": None
+            })
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        user_msg = payload.get("user_msg") or payload.get("text") or ""
+        session_id = payload.get("session_id", "cloud")
+        domain = payload.get("domain")
+        out = _run_chat_fn(user_msg, session_id=session_id, domain=domain)
+        return JSONResponse(status_code=200, content=out)
