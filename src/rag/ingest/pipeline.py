@@ -5,8 +5,7 @@ from pathlib import Path
 from rag.core.config import AppConfig
 from rag.core.chunker import chunk_text
 #from rag.adapters.embeddings_local import LocalEmbedder
-from rag.adapters.vs_faiss import FaissStore
-# from rag.adapters.vs_numpy import NumpyStore
+from rag.adapters.vs_numpy import NumpyStore
 import os
 
 def _make_embedder():
@@ -36,9 +35,15 @@ def ingest_dirs(data_dirs: List[str], fresh: bool = False) -> None:
 
     #emb = LocalEmbedder(cfg.model_name)
     emb = _make_embedder()
-    vs = FaissStore(cfg.index_path, cfg.meta_path, cfg.embed_dim)
-    # vs = NumpyStore(cfg.embed_dim)
-    vs.ensure()
+    # set up vector store
+    vs = NumpyStore(cfg.index_path, cfg.meta_path)
+    # Respect AppConfig.use_s3_index: download from S3 when desired, otherwise load/write local
+    if cfg.use_s3_index:
+        if not cfg.s3_bucket:
+            raise ValueError("USE_S3_INDEX is true but ARTIFACTS_BUCKET (s3_bucket) is not set for ingest.")
+        vs.ensure(bucket=cfg.s3_bucket, prefix=cfg.index_prefix)
+    else:
+        vs.ensure(bucket="", prefix=cfg.index_prefix)
 
     total_chunks = 0
     records: List[Dict] = []
