@@ -1,5 +1,6 @@
 # handlers/slack_events.py
-import os, json, hmac, hashlib, time, urllib.request
+import os, hmac, hashlib, time, urllib.request
+import json
 from base64 import b64decode
 import boto3
 from typing import List, Dict

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ feature/** ]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('src/requirements.txt') }}
+
+      - name: Install deps
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt
+          pip install pytest ruff
+
+      - name: Lint (ruff)
+        run: |
+          . .venv/bin/activate
+          ruff check src tests
+
+      - name: Run unit tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          . .venv/bin/activate
+          pytest -q
+      - name: Run smoke test
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+        run: |
+          . .venv/bin/activate
+          bash tests/smoke_test.sh  
+          

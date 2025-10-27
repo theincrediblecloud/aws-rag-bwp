@@ -1,7 +1,8 @@
 # src/rag/ingest/build_vectors_numpy.py
-import argparse, json, os
+import argparse, os
 import numpy as np
 import boto3
+import json
 
 from rag.adapters.embeddings_bedrock import BedrockEmbedder
 
