@@ -1,5 +1,6 @@
 # src/rag/adapters/embeddings_bedrock.py
-import os, json, time
+import os, time
+import json
 import boto3
 import numpy as np
 
@@ -16,7 +17,7 @@ class BedrockEmbedder:
         self.dim = dim  # optional; not required
 
     def _invoke(self, body: dict):
-        print(f"[bedrock] invoking model: {self.model_id}")
+        #print(f"[bedrock] invoking model: {self.model_id}")
         resp = self.client.invoke_model(
             modelId=self.model_id,
             contentType="application/json",
@@ -38,7 +39,7 @@ class BedrockEmbedder:
                 "texts": texts,
                 "input_type": "search_document"  # reasonable default
             }
-            print(f"[bedrock] invoking model: {self.model_id}")
+            #print(f"[bedrock] invoking model: {self.model_id}")
             out = self._invoke(body)
             # response: {"id":"...", "embeddings":[{"embedding":[...]} , ...]}
             return [e["embedding"] for e in out.get("embeddings", [])]

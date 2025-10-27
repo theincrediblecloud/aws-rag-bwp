@@ -40,7 +40,9 @@ class AppConfig:
     SNIPPET_CHARS = int(os.getenv("SNIPPET_CHARS", "800"))  # was 180
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "50"))
     llm_provider: str = os.getenv("LLM_PROVIDER", "bedrock")  # bedrock | local
-    #llm_model_id: str = os.getenv("LLM_MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0").strip()
+    llm_model_id: str = os.getenv("LLM_MODEL_ID", "arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0").strip()
+    llm_inference_profile_arn: str = os.getenv("LLM_INFERENCE_PROFILE_ARN", "arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0").strip()
+    bedrock_region_llm: str = os.getenv("BEDROCK_REGION_LLM", "us-east-1")
     max_tokens: int = int(os.getenv("MAX_TOKENS", "500"))
     temperature: float = float(os.getenv("TEMPERATURE", "0.2"))
     llm_inference_profile_arn: str = os.getenv("LLM_INFERENCE_PROFILE_ARN", "").strip()

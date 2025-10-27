@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-# Simple smoke test for local ragbot API
+# #!/usr/bin/env bash
+# # Simple smoke test for local ragbot API
 set -euo pipefail
 
 BASE_URL=${1:-http://127.0.0.1:8000}
@@ -12,10 +12,10 @@ if [ "$HTTP" != "200" ]; then
 fi
 
 # echo "Posting a sample chat request"
-# RESP=$(curl -s -X POST ${BASE_URL}/chat -H "Content-Type: application/json" -d '{"user_msg":"What is the primary purpose of the FAM Moderation system?","session_id":"test"}')
-# echo "Response: $RESP"
+RESP=$(curl -s -X POST ${BASE_URL}/chat -H "Content-Type: application/json" -d '{"user_msg":"What is the primary purpose of the FAM Moderation system?","session_id":"test"}')
+echo "Response: $RESP"
 
 # basic JSON sanity checks
-#echo "$RESP" | jq -e '.answer and .citations' >/dev/null || { echo "Invalid response structure" >&2; exit 3; }
+echo "$RESP" | jq -e '.answer and .citations' >/dev/null || { echo "Invalid response structure" >&2; exit 3; }
 
 echo "Smoke test OK"

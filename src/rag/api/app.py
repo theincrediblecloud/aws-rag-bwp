@@ -1,12 +1,13 @@
 # src/rag/api/app.py
 import  base64
 import rag.core.config as config
-import boto3, os, logging, json, traceback
-
+import boto3, os, logging, traceback, botocore
+import json
+import builtins
 try:
-    # FastAPI is optional for Lambda handler usage; if present, expose ASGI app for local dev
-    from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
+    # Optional: used only for local dev
+    from fastapi import FastAPI, Request # pyright: ignore[reportMissingImports]
+    from fastapi.responses import JSONResponse # pyright: ignore[reportMissingImports]
 except Exception:
     FastAPI = None  # type: ignore
     Request = None  # type: ignore
@@ -23,7 +24,7 @@ INDEX_PATH       = config.index_path
 META_PATH        = config.meta_path
 SNIPPET_CHARS    = config.SNIPPET_CHARS
 LLM_PROVIDER = config.llm_provider.lower()
-#LLM_MODEL_ID = config.llm_model_id
+LLM_MODEL_ID = config.llm_model_id
 MAX_TOKENS   = config.max_tokens
 TEMPERATURE  = config.temperature
 BEDROCK_REGION = config.bedrock_region
@@ -37,7 +38,9 @@ _run_chat_fn = None
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO) 
-    
+logger.addHandler(logging.StreamHandler())
+logger = logging.getLogger("diag")
+
 _LOGGED_IDENTITY = False
 def _log_identity_once():
     global _LOGGED_IDENTITY
@@ -62,16 +65,17 @@ def _init_rag():
   
     if _run_chat_fn is not None or _rag_ready:
         return
-
+    
     llm_client = None
-    if LLM_PROVIDER == "bedrock" and LLM_INFERENCE_PROFILE_ARN: #LLM_MODEL_ID
-        print
+    print(f"[debug] has json? { hasattr(builtins, 'json') or 'json' in globals() }")
+
+    print(f"[diag] LLM_PROVIDER={LLM_PROVIDER}, LLM_MODEL_ID={LLM_MODEL_ID}, EMBED_PROVIDER={EMBED_PROVIDER}")
+    if LLM_PROVIDER == "bedrock" and LLM_MODEL_ID: #LLM_INFERENCE_PROFILE_ARN
+        logger.info(f"[llm] initializing Bedrock client, bedrock_region={BEDROCK_REGION}")
         llm_client = boto3.client("bedrock-runtime", region_name=BEDROCK_REGION)
     
     try:
         from rag.core.config import AppConfig
-        from rag.core import retriever
-
         cfg = AppConfig()  # uses env for bucket/prefix/paths
 
         # ---- Embeddings (default: Bedrock in Lambda) ----
@@ -83,7 +87,7 @@ def _init_rag():
             )
         else:
             from rag.adapters.embeddings_local import LocalEmbedder as Embedder
-            embedder = Embedder(cfg.model_name, local_dir=cfg.model_local_dir)
+            embedder = Embedder(cfg.model_name)
 
         # ---- Vector store: NumPy (no FAISS native deps) ----
         # NumpyStore.ensure() should pull /tmp files from S3 (prefix=INDEX_PREFIX)
@@ -115,9 +119,9 @@ def _init_rag():
                 return [0.0 for _ in v]
             return [float(x / s) for x in v]
         
-        def _llm_complete(system_prompt: str, user_prompt: str) -> str:
+        def _llm_complete(system_prompt: str, user_prompt: str, _json_mod=json) -> str | None:
             # Only Bedrock Anthropic shown here
-            if not llm_client or not LLM_INFERENCE_PROFILE_ARN :#LLM_MODEL_ID:
+            if not llm_client or not LLM_MODEL_ID: #LLM_INFERENCE_PROFILE_ARN
                 # Fallback: just return the user_prompt or a stub
                 return None
             body = {
@@ -129,14 +133,14 @@ def _init_rag():
                     {"role": "user", "content": [{"type":"text","text": user_prompt}]}
                 ],
             }
-            #LLM_TARGET_ID = LLM_INFERENCE_PROFILE_ARN or LLM_MODEL_ID
-            print(f"[llm] invoking model/profile: {LLM_INFERENCE_PROFILE_ARN}") #LLM_TARGET_ID
+            print(f"[llm] invoking model/profile: {LLM_MODEL_ID}, region:{BEDROCK_REGION}")
             resp = llm_client.invoke_model(
-                modelId=LLM_INFERENCE_PROFILE_ARN,                 
-                body=json.dumps(body).encode("utf-8"),
+                modelId=LLM_MODEL_ID,                 
+                body=_json_mod.dumps(body).encode("utf-8"),
                 contentType="application/json",
                 accept="application/json",
             )
+            
             out = json.loads(resp["body"].read())
             print
             # Anthropic format: choices-like -> content list -> {text}
@@ -156,7 +160,6 @@ def _init_rag():
                 }
 
             # (optionally) condense query; keep simple for now
-            # q_text = retriever.condense_query([], q_user) or q_user
             q_text = q_user
             q_vec = embedder.embed([q_text])[0]     # list[float]
             q_vec = _normalize(q_vec)
@@ -207,14 +210,15 @@ def _init_rag():
         _run_chat_fn = run_chat
         _rag_ready = True
     except Exception as e:
-        _rag_error = f"{e.__class__.__name__}: {e}"
+        logging.getLogger("rag.api").exception("[api] init failed")  # logs full traceback
+        _rag_error = "Initialization failed"  # short, single-line
         _rag_ready = False
 
 
-def _json(status: int, body: dict, headers: dict | None = None):
+def _json(status: int, body: dict, headers: dict | None = None, _json_mod=json):
     h = {"Content-Type": "application/json"}
     if headers: h.update(headers)
-    return {"statusCode": status, "headers": h, "body": json.dumps(body)}
+    return {"statusCode": status, "headers": h, "body": _json_mod.dumps(body)}
 
 
 def handler(event, context):
@@ -224,6 +228,7 @@ def handler(event, context):
       POST /chat   (JSON: {"user_msg": "...", "session_id":"...", "domain": null})
     """
     _log_identity_once()
+    logger.info(f"boto3={boto3.__version__}, botocore={botocore.__version__}")
     try:
         path = event.get("rawPath") or event.get("path") or "/"
         method = (event.get("requestContext", {}).get("http", {}).get("method")
@@ -269,14 +274,20 @@ def handler(event, context):
     except Exception:
         # keep client tidy, log server-side details
         import logging
-        logging.getLogger("rag.api").error("[api] unhandled error\n%s", traceback.format_exc())
+        logging.getLogger("rag.api").exception("[api] unhandled error")
         return _json(500, {"message": "Internal Server Error"})
 
-
 # --- optional ASGI app for local development (uvicorn) ---
-if FastAPI is not None:
-    app = FastAPI()
 
+IS_LAMBDA = bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+print(f"[diag] IS_LAMBDA={IS_LAMBDA}")
+app = FastAPI() if not IS_LAMBDA else None
+if app:
+    # Import pydantic only for local FastAPI usage
+    try:
+        from pydantic import BaseModel
+    except Exception:
+        BaseModel = None  # type: ignore
     @app.get("/health")
     async def _health():
         _init_rag()
@@ -285,8 +296,9 @@ if FastAPI is not None:
             resp["error"] = f"RAG back-end not initialized: {_rag_error}"
         return JSONResponse(status_code=200, content=resp)
 
+    # Keep request-body parsing permissive to avoid 422s
     @app.post("/chat")
-    async def _chat(request):
+    async def _chat(request: Request): # pyright: ignore[reportMissingImports]
         _init_rag()
         if not _rag_ready or _run_chat_fn is None:
             return JSONResponse(status_code=200, content={
@@ -297,8 +309,10 @@ if FastAPI is not None:
             payload = await request.json()
         except Exception:
             payload = {}
-        user_msg = payload.get("user_msg") or payload.get("text") or ""
-        session_id = payload.get("session_id", "cloud")
-        domain = payload.get("domain")
+        user_msg  = payload.get("user_msg") or payload.get("text") or ""
+        session_id= payload.get("session_id", "cloud")
+        domain    = payload.get("domain")
         out = _run_chat_fn(user_msg, session_id=session_id, domain=domain)
         return JSONResponse(status_code=200, content=out)
+
+# --- end ASGI app ---

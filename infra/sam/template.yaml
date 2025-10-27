@@ -23,6 +23,12 @@ Parameters:
     Type: String
   RagApiUrl:
     Type: String
+  LlmModelId:
+    Type: String
+    Default: arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
+  LlmInferenceProfileArn:
+    Type: String
+    Default: arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
 
 Globals:
   Function:
@@ -38,14 +44,14 @@ Globals:
         INDEX_PREFIX: !Ref IndexPrefix
         FAISS_KEY: !Ref FaissKey
         META_KEY: !Ref MetaKey
-        EMBEDDER_PROVIDER: bedrock
+        EMBED_PROVIDER: bedrock
         BEDROCK_REGION: !Ref AWS::Region
         BEDROCK_MODEL: amazon.titan-embed-text-v2:0
         SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
         SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
         LLM_PROVIDER: bedrock
-       # LLM_MODEL_ID: anthropic.claude-haiku-4-5-20251001-v1:0
-        LLM_INFERENCE_PROFILE_ARN: arn:aws:bedrock:us-east-1:471112701253:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
+        LLM_MODEL_ID: !Ref LlmModelId
+        LLM_INFERENCE_PROFILE_ARN: !Ref LlmInferenceProfileArn
         CHUNK_SIZE: "500"
         CHUNK_OVERLAP: "50"
         SNIPPET_CHARS: "800"
@@ -93,13 +99,9 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
-                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-*
-                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-text-*
-                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
-                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
-                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/*
-
+                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
+                  - arn:aws:bedrock:*:*:inference-profile/*
+                  - arn:aws:bedrock:*::foundation-model/*
         - PolicyName: ReadVectors
           PolicyDocument:
             Version: "2012-10-17"
@@ -171,12 +173,9 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
-                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-*
-                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-text-*
-                  - arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0
-                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/global.anthropic.claude-haiku-4-5-20251001-v1:0
-                  - arn:aws:bedrock:us-east-1:471112701253:inference-profile/*
+                  - arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2*
+                  - arn:aws:bedrock:*:*:inference-profile/*
+                  - arn:aws:bedrock:*::foundation-model/*
         - PolicyName: SlackEventsSecrets
           PolicyDocument:
             Version: "2012-10-17"

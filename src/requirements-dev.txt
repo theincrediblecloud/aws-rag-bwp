@@ -1,0 +1,15 @@
+-r requirements.txt
+
+# Local API server
+fastapi==0.115.0
+uvicorn==0.30.6
+python-dotenv==1.0.1
+
+# Document ingestion
+pypdf==4.3.1
+python-docx==1.1.2
+markdown-it-py==3.0.0
+
+# Optional: testing & linting
+pytest==8.3.3
+black==24.10.0
