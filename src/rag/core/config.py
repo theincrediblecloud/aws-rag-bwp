@@ -21,7 +21,20 @@ class AppConfig:
     slack_bot_token_arn: str      = os.getenv("SLACK_BOT_TOKEN_ARN", "")
 
     # Retrieval
-    top_k: int = int(os.getenv("TOP_K", "8"))
+    top_k: int = int(os.getenv("TOP_K", "24"))
+    RETRIEVE_K: int = int(os.getenv("RETRIEVE_K", "24"))
+    CONTEXT_K: int = int(os.getenv("CONTEXT_K", "8"))
+    ANSWER_FALLBACK = "allow"
+    FALLBACK_MODE = (os.getenv("ANSWER_FALLBACK", "deny") or "deny").strip().lower()
+    FALLBACK_ALLOWED = FALLBACK_MODE in {"allow", "on", "true", "1"}
+    FALLBACK_MIN_SCORE = float(os.getenv("FALLBACK_MIN_SCORE", "0.25"))
+    FALLBACK_MESSAGE = os.getenv(
+        "FALLBACK_MESSAGE",
+        "I couldn’t find an in-corpus basis. Here’s a brief general answer (no citations)."
+    )
+    STRICT_MESSAGE = os.getenv(
+        "STRICT_MESSAGE",
+        "I’m sorry, I can’t provide an answer based on the available documents.")
 
     # Computed local paths (Lambda’s /tmp)
     index_dir: str = os.getenv("INDEX_DIR", "/tmp/index")
@@ -45,7 +58,6 @@ class AppConfig:
     bedrock_region_llm: str = os.getenv("BEDROCK_REGION_LLM", "us-east-1")
     max_tokens: int = int(os.getenv("MAX_TOKENS", "500"))
     temperature: float = float(os.getenv("TEMPERATURE", "0.2"))
-    llm_inference_profile_arn: str = os.getenv("LLM_INFERENCE_PROFILE_ARN", "").strip()
 
 
     

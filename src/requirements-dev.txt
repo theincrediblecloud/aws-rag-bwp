@@ -9,7 +9,16 @@ python-dotenv==1.0.1
 pypdf==4.3.1
 python-docx==1.1.2
 markdown-it-py==3.0.0
+tqdm>=4.66.0
+
+# Local embeddings (offline)
+# torch: don’t pin strictly so pip picks the right wheel for your OS/CPU
+torch>=2.2.0
+sentence-transformers>=2.6,<3
 
 # Optional: testing & linting
 pytest==8.3.3
 black==24.10.0
+# If you prefer installing via file (instead of Makefile), uncomment:
+# ruff>=0.6.0
+# mypy>=1.11.0

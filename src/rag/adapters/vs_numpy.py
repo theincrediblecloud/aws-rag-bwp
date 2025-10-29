@@ -1,133 +1,160 @@
 # src/rag/adapters/vs_numpy.py
-from pathlib import Path
-import numpy as np
-import json
+import os, json, io, boto3, numpy as np
 
 class NumpyStore:
-    def __init__(self, local_vec_path, local_meta_path):
-        self.local_vec_path = Path(local_vec_path)
-        self.local_meta_path = Path(local_meta_path)
-        self.X = None          # np.ndarray of shape (N, D) or None
-        self.metadatas = []    # list[dict]
+    """
+    Minimal vector store backed by NumPy arrays.
+    Expects:
+      - vectors: npy file of shape [N, D], dtype float32 (or convertible)
+      - meta:    jsonl file with N lines (one dict per vector)
+    """
+
+    def __init__(self, index_path: str, meta_path: str):
+        self.index_path = index_path
+        self.meta_path  = meta_path
+        self.vecs: np.ndarray | None = None   # [N, D]
+        self.meta: list[dict] = []
+        self.dim:  int | None = None
+        self._ready = False
+
+    def begin_build(self):
+        """Start a brand-new in-memory build (fresh index)."""
+        self._b_vecs = []
+        self._b_meta = []
+        self._ready = False
+
+    def add_batch(self, vecs, metas):
+        """Append a batch of vectors + meta dicts (same length)."""
+        import numpy as np
+        assert len(vecs) == len(metas), "vecs/metas length mismatch"
+        # ensure float32 + L2-normalize
+        vecs = np.asarray(vecs, dtype=np.float32)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        vecs = vecs / norms
+        self._b_vecs.append(vecs)
+        self._b_meta.extend(metas)
+
+    def finalize(self):
+        """Write vectors.npy + meta.jsonl to index_path/meta_path and load them."""
+        import numpy as np, json, os
+        os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
+        V = np.vstack(self._b_vecs) if self._b_vecs else np.zeros((0, 1), dtype=np.float32)
+        np.save(self.index_path, V)
+        with open(self.meta_path, "w", encoding="utf-8") as f:
+            for m in self._b_meta:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+        # load into runtime arrays
+        self._b_vecs, self._b_meta = [], []
+        self._load_local(self.index_path, self.meta_path)  # reuses your existing loader
+
+    def _load_local(self, idx_path: str, meta_path: str):
+        if not os.path.isfile(idx_path):
+            raise FileNotFoundError(f"vectors npy not found: {idx_path}")
+        if not os.path.isfile(meta_path):
+            raise FileNotFoundError(f"meta jsonl not found: {meta_path}")
+
+        vecs = np.load(idx_path, mmap_mode="r")
+        if vecs.dtype != np.float32:
+            vecs = vecs.astype(np.float32, copy=False)
+
+        # L2 normalize rows (safe)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        vecs = vecs / norms
+
+        meta = []
+        with open(meta_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    meta.append({})
+                    continue
+                try:
+                    meta.append(json.loads(line))
+                except Exception:
+                    meta.append({})
+
+        if vecs.shape[0] != len(meta):
+            raise ValueError(f"count mismatch: vectors={vecs.shape[0]} meta_lines={len(meta)}")
+
+        self.vecs = vecs
+        self.meta = meta
+        self.dim  = int(vecs.shape[1])
+        self._ready = True
+        print(f"[vectors] loaded local index: N={vecs.shape[0]} D={self.dim}")
+
+    def _download_s3(self, bucket: str, prefix: str, tmp_dir: str):
+        """Downloads s3://bucket/prefix/{vectors.npy,meta.jsonl} to tmp_dir."""
+        s3 = boto3.client("s3")
+        os.makedirs(tmp_dir, exist_ok=True)
+        idx_key  = f"{prefix.rstrip('/')}/vectors.npy"
+        meta_key = f"{prefix.rstrip('/')}/meta.jsonl"
+        idx_dst  = os.path.join(tmp_dir, "vectors.npy")
+        meta_dst = os.path.join(tmp_dir, "meta.jsonl")
+
+        print(f"[vectors] downloading s3://{bucket}/{idx_key} -> {idx_dst}")
+        s3.download_file(bucket, idx_key, idx_dst)
+        print(f"[vectors] downloading s3://{bucket}/{meta_key} -> {meta_dst}")
+        s3.download_file(bucket, meta_key, meta_dst)
+        return idx_dst, meta_dst
 
     def ensure(self, bucket: str = "", prefix: str = ""):
         """
-        Load vectors+meta from local disk or S3 if present; otherwise initialize empty.
-        This MUST NOT raise just because files don't exist yet (ingest will create them).
+        Loads the vectors + meta into memory (or from S3), sets self.vecs/meta.
         """
-        vec_p = self.local_vec_path
-        meta_p = self.local_meta_path
-        vec_p.parent.mkdir(parents=True, exist_ok=True)
-
-        # 1) If loading from local disk
-        import json
-        if not bucket:
-            if vec_p.exists() and meta_p.exists():
-                self.X = np.load(vec_p)
-                with open(meta_p, "r", encoding="utf-8") as f:
-                    self.metadatas = [json.loads(line) for line in f]
+        try:
+            if bucket:
+                tmp_dir = "/tmp/rag_index"
+                idx_path, meta_path = self._download_s3(bucket, prefix, tmp_dir)
+                self._load_local(idx_path, meta_path)
             else:
-                # initialize empty; upsert() will populate
-                self.X = np.zeros((0, 0), dtype=np.float32)
-                self.metadatas = []
-            return
+                # local mode
+                self._load_local(self.index_path, self.meta_path)
+        except Exception as e:
+            # mark not ready but do not crash process; caller can check .ready()
+            self._ready = False
+            print(f"[vectors] ensure() failed: {e}")
 
-        # 2) If loading from S3
-        import boto3, botocore
-        import json
-        s3 = boto3.client("s3")
-        vec_key = f"{prefix.rstrip('/')}/vectors.npy"
-        meta_key = f"{prefix.rstrip('/')}/meta.jsonl"
+    def ready(self) -> bool:
+        return bool(self._ready and self.vecs is not None and self.meta)
 
-        def _s3_exists(key: str) -> bool:
-            try:
-                s3.head_object(Bucket=bucket, Key=key)
-                return True
-            except botocore.exceptions.ClientError as e:
-                if e.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404 or e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
-                    return False
-                raise
-
-        any_found = False
-        if _s3_exists(vec_key):
-            s3.download_file(bucket, vec_key, str(vec_p))
-            any_found = True
-        if _s3_exists(meta_key):
-            s3.download_file(bucket, meta_key, str(meta_p))
-            any_found = True
-
-        if any_found and vec_p.exists() and meta_p.exists():
-            self.X = np.load(vec_p)
-            with open(meta_p, "r", encoding="utf-8") as f:
-                self.metadatas = [json.loads(line) for line in f]
-        else:
-            # initialize empty; upsert() will populate and you can upload later if desired
-            self.X = np.zeros((0, 0), dtype=np.float32)
-            self.metadatas = []
-
-    def upsert(self, records):
-        """
-        records: list of { vector: list[float], ...meta... }
-        Persists to local_vec_path/local_meta_path.
-        """
-        import json
-        new_vecs = [np.asarray(r["vector"], dtype=np.float32).reshape(-1) for r in records]
-        if not new_vecs:
-            return
-
-        D = new_vecs[0].shape[0]
-        new_X = np.vstack(new_vecs)
-
-        # initialize or append
-        if self.X is None or self.X.size == 0:
-            self.X = new_X
-        else:
-            # if first dim inference was (0,0), fix the dimensionality
-            if self.X.shape[1] == 0:
-                self.X = np.zeros((0, D), dtype=np.float32)
-            if self.X.shape[1] != D:
-                raise ValueError(f"dimension mismatch: existing {self.X.shape[1]} vs new {D}")
-            self.X = np.vstack([self.X, new_X])
-
-        # append metadata
-        for r in records:
-            m = {k: v for k, v in r.items() if k != "vector"}
-            self.metadatas.append(m)
-
-        # persist
-        self.local_vec_path.parent.mkdir(parents=True, exist_ok=True)
-        np.save(self.local_vec_path, self.X)
-        with open(self.local_meta_path, "w", encoding="utf-8") as f:
-            for m in self.metadatas:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+    def size(self) -> int:
+        return 0 if self.vecs is None else int(self.vecs.shape[0])
 
     def search(self, q_vec, k: int = 10):
-        import numpy as np
-        # handle empty index gracefully
-        if self.X is None or self.X.size == 0:
+        """
+        Cosine similarity search on L2-normalized vectors.
+        Returns a list[dict] with fields:
+          - chunk_text, title, source_path, page, score
+        """
+        if not self.ready():
+            raise RuntimeError("Vector index not loaded. Call ensure() and verify paths/bucket/prefix.")
+
+        V = self.vecs  # [N, D]
+        q = np.asarray(q_vec, dtype=np.float32)
+        # normalize q
+        n = np.linalg.norm(q)
+        if n == 0:
             return []
-
-        q = np.asarray(q_vec, dtype=np.float32).reshape(-1)
-        print(f"q.shape: {q.shape}, X.shape: {self.X.shape}")
-        if q.size != self.X.shape[1]:
-            raise ValueError(f"dimension mismatch: stored {self.X.shape[1]}, query {q.size}")
-
-        # normalize
-        qn = q / (np.linalg.norm(q) + 1e-8)
-        Xn = self.X / (np.linalg.norm(self.X, axis=1, keepdims=True) + 1e-8)
-
-        sims = Xn @ qn
-        k = min(int(k), sims.size)
-        if k <= 0:
-            return []
-        idx = np.argpartition(-sims, k - 1)[:k]
+        q = q / n
+        if V.shape[1] != q.shape[0]:
+            raise ValueError(f"dim mismatch: index_dim={V.shape[1]} query_dim={q.shape[0]}")
+        sims = V @ q  # cosine similarity
+        k = min(k, V.shape[0])
+        # partial sort for top-k
+        idx = np.argpartition(-sims, k-1)[:k]
         idx = idx[np.argsort(-sims[idx])]
+
         out = []
         for i in idx:
-            m = self.metadatas[int(i)] if 0 <= int(i) < len(self.metadatas) else {"index": int(i)}
+            m = self.meta[i] if i < len(self.meta) else {}
             out.append({
-                "index": int(i),
-                "score": float(sims[int(i)]),
-                **({k: v for k, v in m.items()} if isinstance(m, dict) else {"metadata": m}),
+                "chunk_text": m.get("chunk_text") or m.get("text") or "",
+                "title": m.get("title"),
+                "source_path": m.get("source_path") or m.get("source") or m.get("url"),
+                "page": m.get("page"),
+                "score": float(sims[i]),
+                "meta": m,
             })
         return out

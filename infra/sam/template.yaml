@@ -11,9 +11,6 @@ Parameters:
   IndexPrefix:
     Type: String
     Default: rag/index
-  FaissKey:
-    Type: String
-    Default: rag/index/faiss.index
   MetaKey:
     Type: String
     Default: rag/index/meta.json
@@ -29,6 +26,14 @@ Parameters:
   LlmInferenceProfileArn:
     Type: String
     Default: arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
+  UseS3Index:
+    Type: String
+    AllowedValues: ["true","false"]
+    Default: "true"
+  AnswerFallback:
+    Type: String
+    AllowedValues: ["allow","deny"]
+    Default: "allow"
 
 Globals:
   Function:
@@ -42,7 +47,6 @@ Globals:
         ARTIFACTS_BUCKET: !Ref ArtifactsBucket
         MODEL_NAME: !Ref ModelName
         INDEX_PREFIX: !Ref IndexPrefix
-        FAISS_KEY: !Ref FaissKey
         META_KEY: !Ref MetaKey
         EMBED_PROVIDER: bedrock
         BEDROCK_REGION: !Ref AWS::Region
@@ -55,8 +59,10 @@ Globals:
         CHUNK_SIZE: "500"
         CHUNK_OVERLAP: "50"
         SNIPPET_CHARS: "800"
-        TOP_K: "8"
+        TOP_K: 24 
         MAX_TOKENS: "500"
+        USE_S3_INDEX: !Ref UseS3Index
+        ANSWER_FALLBACK: !Ref AnswerFallback
 
 Resources:
   HttpApi:

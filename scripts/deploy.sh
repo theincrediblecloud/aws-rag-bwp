@@ -28,7 +28,7 @@ sam deploy \
   --resolve-s3 \
   --parameter-overrides \
     ArtifactsBucket="slack-rag-artifacts-73918652" \
-    RagApiUrl="https://z4n0qub7cc.execute-api.us-east-1.amazonaws.com/Prod/chat" \
+    RagApiUrl="https://6edg14q4fh.execute-api.us-east-1.amazonaws.com/Prod/chat" \
     SlackBotTokenArn="arn:aws:secretsmanager:us-east-1:471112701253:secret:rag/slack/bot_token-tZy5lT" \
     SlackSigningSecretArn="arn:aws:secretsmanager:us-east-1:471112701253:secret:slack/signing-secret-n7WDeM"
 

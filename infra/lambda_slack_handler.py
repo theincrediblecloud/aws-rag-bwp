@@ -1,7 +1,8 @@
 # lambda_slack_handler.py
 import os, time, hmac, hashlib, json, urllib.parse, urllib.request
+import re
 
-RAG_API = os.environ["RAG_API"]          # e.g., https://api.example.com/chat
+RAG_API = os.environ["RAG_API"].strip()          # e.g., https://api.example.com/chat
 SLACK_SIGNING_SECRET = os.environ["SLACK_SIGNING_SECRET"]
 
 def _verify(headers, body_bytes):
@@ -18,6 +19,17 @@ def _post_json(url, payload):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type":"application/json"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read().decode())
+
+def normalize_slack_text(text: str) -> str:
+    t = (text or "").strip()
+    # remove bot mentions <@UXXXX> and @rag
+    t = re.sub(r"<@[^>]+>", " ", t)
+    t = re.sub(r"(^|\\s)@rag(\\b)", " ", t, flags=re.IGNORECASE)
+    # drop verbs that add noise
+    t = re.sub(r"^(explain|define|what\\s+is)\\s+", "", t, flags=re.IGNORECASE)
+    # normalize spaces/quotes
+    t = t.replace("“","\"").replace("”","\"").replace("’","'")
+    return re.sub(r"\\s+", " ", t).strip() or text
 
 def handler(event, context):
     # Slack sends form-encoded body
@@ -42,9 +54,13 @@ def handler(event, context):
     # Simpler: do synchronous call here if you’re confident <3s.
     # Here we’ll do the work inline for clarity; if it’s slow, move to async.
 
+    topic = normalize_slack_text(event.get("text", ""))    
+    payload = {"user_msg": topic, "session_id": channel}
+
     # call RAG API
     try:
-        rag_resp = _post_json(RAG_API, {"user_msg": text, "session_id": channel})
+        print(f"rag_api: calling {RAG_API} for channel {channel} user {user}")
+        rag_resp = _post_json(RAG_API, payload)
         answer = rag_resp.get("answer","No answer.")
         cites = rag_resp.get("citations", [])
         lines = [answer, "\n*Citations:*"]
