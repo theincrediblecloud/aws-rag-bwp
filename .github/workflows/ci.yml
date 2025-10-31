@@ -10,18 +10,45 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}/src
-      # Force pure-local mode so CI never touches AWS
-      APP_ENV: "local"
-      USE_S3_INDEX: "false"
-      EMBED_PROVIDER: "local"
-      MODEL_NAME: "sentence-transformers/all-MiniLM-L6-v2"
-      EMBED_DIM: "384"
-      LLM_PROVIDER: "none"
-      # retrieval knobs (safe defaults)
-      RETRIEVE_K: "24"
-      CONTEXT_K: "8"
-      FALLBACK_MIN_SCORE: "0.32"
-      ANSWER_FALLBACK: "allow"
+      APP_ENV: local
+      ARTIFACTS_BUCKET: ""
+      MODEL_NAME: sentence-transformers/all-MiniLM-L6-v2
+      INDEX_PREFIX: rag/index
+      META_KEY: rag/index/meta.json
+      INDEX_DIR: $(PWD)/store_local
+      INDEX_PATH: $(PWD)/store_local/vectors.npy 
+      META_PATH: $(PWD)/store_local/meta.jsonl
+      USE_S3_INDEX: false
+      SLACK_SIGNING_SECRET_ARN: ""
+      SLACK_BOT_TOKEN_ARN: ""
+      TOP_K: 24
+      RETRIEVE_K: 24
+      CONTEXT_K: 8
+      ANSWER_FALLBACK: allow
+      FALLBACK_MIN_SCORE: 0.32
+      FALLBACK_MESSAGE: "I couldn’t find an in-corpus basis. Here’s a brief general answer (no citations)."
+      STRICT_MESSAGE: "I’m sorry, I can’t provide an answer based on the available documents."
+      AWS_REGION: us-east-1
+      EMBED_PROVIDER: local
+      BEDROCK_REGION: us-east-1
+      BEDROCK_MODEL: amazon.titan-embed-text-v2:0
+      LLM_PROVIDER: local
+      LLM_MODEL_ID: none
+      LLM_INFERENCE_PROFILE_ARN: none
+      BEDROCK_REGION_LLM: us-east-1
+      MAX_TOKENS: 500
+      TEMPERATURE: 0.2
+      INDEX_VERSION: v2
+      CACHE_TIER1: true
+      CACHE_TTL_SEC: 1800
+      CACHE_MAX_ITEMS: 1000
+      CACHE_ANSWERS: false
+      DDB_CACHE_TABLE: rag-answer-cache
+      CACHE_TTL_SECONDS: 172800
+      EMBED_DIM: 384
+      CHUNK_SIZE: 600
+      SNIPPET_CHARS: 800
+      CHUNK_OVERLAP: 50
 
     steps:
       - name: Checkout
@@ -39,8 +66,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f src/requirements-dev.txt ]; then pip install -r src/requirements-dev.txt; fi
-          if [ -f src/requirements.txt ]; then pip install -r src/requirements.txt; fi
+          pip install -r src/requirements-dev.txt
 
       - name: Unit & smoke tests
         run: |
