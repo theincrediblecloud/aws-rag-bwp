@@ -28,7 +28,7 @@ echo "[smoke] rag_ready=$READY"
 
 echo "[smoke] POST /chat"
 CHAT_JSON="$(curl -fsS -X POST "$BASE_URL/chat" -H "Content-Type: application/json" \
-  -d '{"user_msg":"Summarize FAM moderation solution?"}')"
+  -d '{"user_msg":"What is Generative AI?"}')"
 echo "$CHAT_JSON" | jq .
 
 ANSWER="$(echo "$CHAT_JSON" | jq -r '.answer // ""')"

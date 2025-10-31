@@ -1,5 +1,5 @@
 # src/rag/ingest/rebuild_index_bedrock.py
-import os, argparse, math
+import os, argparse
 import boto3
 import json
 import numpy as np

@@ -13,7 +13,7 @@ Parameters:
     Default: rag/index
   MetaKey:
     Type: String
-    Default: rag/index/meta.json
+    Default: rag/index/meta.jsonl
   SlackSigningSecretArn:
     Type: String
   SlackBotTokenArn:
@@ -34,22 +34,36 @@ Parameters:
     Type: String
     AllowedValues: ["allow","deny"]
     Default: "allow"
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, staging, prod]
+  ProvisionedConcurrency:
+    Type: Number
+    Default: 2
+    Description: Number of provisioned concurrent executions
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
 
 Globals:
   Function:
     Runtime: python3.11
     Architectures: [arm64]
-    Timeout: 30
+    Timeout: 45
     MemorySize: 2048
+    Tracing: Active 
     Environment:
       Variables:
-        APP_ENV: prod
+        APP_ENV: !Ref Environment
         ARTIFACTS_BUCKET: !Ref ArtifactsBucket
         MODEL_NAME: !Ref ModelName
         INDEX_PREFIX: !Ref IndexPrefix
         META_KEY: !Ref MetaKey
+        INDEX_PATH: s3://#{ArtifactsBucket}/#{IndexPrefix}/vectors.npy
+        META_PATH:  s3://#{ArtifactsBucket}/#{MetaKey}
         EMBED_PROVIDER: bedrock
-        BEDROCK_REGION: !Ref AWS::Region
+        BEDROCK_REGION: us-east-1
         BEDROCK_MODEL: amazon.titan-embed-text-v2:0
         SLACK_SIGNING_SECRET_ARN: !Ref SlackSigningSecretArn
         SLACK_BOT_TOKEN_ARN: !Ref SlackBotTokenArn
@@ -59,10 +73,24 @@ Globals:
         CHUNK_SIZE: "500"
         CHUNK_OVERLAP: "50"
         SNIPPET_CHARS: "800"
-        TOP_K: 24 
+        CONTEXT_K: "8"
+        RETRIEVE_K: "24"
+        TOP_K: "24"
         MAX_TOKENS: "500"
+        TEMPERATURE: "0.2"
+        "EMBED_DIM": 1024
         USE_S3_INDEX: !Ref UseS3Index
         ANSWER_FALLBACK: !Ref AnswerFallback
+        FALLBACK_MIN_SCORE: "0.32"
+        FALLBACK_MESSAGE: "I couldn’t find an in-corpus basis. Here’s a brief general answer (no citations)."
+        STRICT_MESSAGE: "I’m sorry, I can’t provide an answer based on the available documents."
+        INDEX_VERSION: "v2"
+        CACHE_TIER1: "true"
+        CACHE_TTL_SEC: "1800"
+        CACHE_MAX_ITEMS: "1000"
+        CACHE_ANSWERS: "false"
+        DDB_CACHE_TABLE: !Ref RagAnswerCache
+        CACHE_TTL_SECONDS: "172800"
 
 Resources:
   HttpApi:
@@ -73,6 +101,21 @@ Resources:
         AllowMethods: ["GET", "POST", "OPTIONS"]
         AllowHeaders: ["*"]
         AllowOrigins: ["*"]
+  
+  RagAnswerCache:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-AnswerCache"
+      BillingMode: PAY_PER_REQUEST         # on-demand, no capacity planning
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S                 # partition key: hash of question+domain+version
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
   # IAM Role for RAGApi
   RAGApiRole:
@@ -129,6 +172,20 @@ Resources:
                 Resource:
                   - !Ref SlackSigningSecretArn
                   - !Ref SlackBotTokenArn
+        - PolicyName: AWSLambdaBasicExecutionRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${ArtifactsBucket}/${IndexPrefix}/*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt RagAnswerCache.Arn
 
   RAGApi:
     Type: AWS::Serverless::Function
@@ -137,6 +194,25 @@ Resources:
       Handler: rag.api.app.handler
       MemorySize: 2048
       Timeout: 30
+      EphemeralStorage:                   # optional, if your /tmp index grows
+        Size: 1024
+      AutoPublishAlias: live
+      # ReservedConcurrentExecutions: 20
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 5
+      # ProvisionedConcurrencyConfig: !If
+      #   - IsProd
+      #   - ProvisionedConcurrentExecutions: !Ref ProvisionedConcurrency
+      #   - !Ref "AWS::NoValue"
+      DeploymentPreference:
+        Type: AllAtOnce  # or Linear10PercentEvery1Minute, Canary10Percent5Minutes
+      Environment:
+        Variables:
+          USE_S3_INDEX: "true"
+          # Cache env (set below when we add the table)
+          CACHE_ANSWERS: "true"
+          CACHE_TTL_SECONDS: "86400"
+          DDB_CACHE_TABLE: !Ref RagAnswerCache
       Role: !GetAtt RAGApiRole.Arn
       Layers:
         - arn:aws:lambda:us-east-1:471112701253:layer:numpy-1264-arm64:9
@@ -198,10 +274,17 @@ Resources:
     Properties:
       CodeUri: ../../src
       Handler: handlers.slack_events.handler
-      MemorySize: 256
+      MemorySize: 512
       Timeout: 10
       Role: !GetAtt SlackEventsRole.Arn
       Layers: []
+      AutoPublishAlias: live
+      # ProvisionedConcurrencyConfig:
+      #   ProvisionedConcurrentExecutions: 1
+      # ProvisionedConcurrencyConfig: !If
+      #   - IsProd
+      #   - ProvisionedConcurrentExecutions: 1
+      #   - !Ref "AWS::NoValue"
       Environment:
         Variables:
           RagApiUrl: !Ref RagApiUrl

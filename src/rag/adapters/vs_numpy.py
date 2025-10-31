@@ -1,5 +1,5 @@
 # src/rag/adapters/vs_numpy.py
-import os, json, io, boto3, numpy as np
+import os, json, boto3, numpy as np
 
 class NumpyStore:
     """

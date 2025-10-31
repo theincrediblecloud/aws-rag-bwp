@@ -1,7 +1,7 @@
 # src/rag/ingest/loaders.py
 import os
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable
 
 def _chunk_text(txt: str, chunk_size: int, overlap: int):
     n = len(txt); i = 0

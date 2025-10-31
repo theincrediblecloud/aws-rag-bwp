@@ -1,10 +1,9 @@
 # src/rag/ingest/pipeline.py
 from __future__ import annotations
 import numpy as np
-import os, sys, json, argparse, pathlib, traceback
+import os, json
 from pathlib import Path
 from typing import Iterable, List, Dict, Any
-from rag.ingest.loaders import load_file_to_chunks
 
 # Optional: load .env for local runs
 try:
@@ -252,7 +251,7 @@ def main(argv=None):
     """
     import argparse
     from pathlib import Path
-    import sys, traceback, os
+    import sys, traceback
 
     p = argparse.ArgumentParser(description="Build NumPy/FAISS index from one or more data dirs.")
     p.add_argument("--data-dir", action="append", required=True,
