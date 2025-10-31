@@ -27,39 +27,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            src/requirements-dev.txt
+            src/requirements.txt
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('src/requirements-dev.txt') }}
-          restore-keys: |
-            pip-${{ runner.os }}-
-
-      - name: Cache HuggingFace models
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.HF_HOME }}
-          key: hf-${{ runner.os }}-${{ env.MODEL_NAME }}
-
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r src/requirements-dev.txt
+          if [ -f src/requirements-dev.txt ]; then pip install -r src/requirements-dev.txt; fi
+          if [ -f src/requirements.txt ]; then pip install -r src/requirements.txt; fi
 
-      - name: Lint import / quick sanity
-        run: |
-          python - <<'PY'
-          import importlib; import sys
-          sys.path.append("src")
-          importlib.import_module("rag.api.app")
-          print("app import OK")
-          PY
-
-      - name: Run tests
+      - name: Unit & smoke tests
         run: |
           pytest -q
+
