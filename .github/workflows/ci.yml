@@ -44,5 +44,5 @@ jobs:
 
       - name: Unit & smoke tests
         run: |
-          pytest -q
+          make test
 
