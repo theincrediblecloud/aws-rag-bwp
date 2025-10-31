@@ -23,8 +23,6 @@ jobs:
 
       - name: Setup SAM CLI
         uses: aws-actions/setup-sam@v2
-        with:
-          version: latest
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
