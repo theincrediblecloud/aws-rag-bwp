@@ -13,10 +13,16 @@ jobs:
       contents: read
     env:
       AWS_REGION: us-east-1
+      STACK_DEV: slack-rag-dev
+      STACK_PROD: slack-rag-prod-v2
+      ARTIFACTS_BUCKET: slack-rag-artifacts-73918652
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam-cli@v2
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -27,34 +33,44 @@ jobs:
       - name: Verify AWS identity
         run: aws sts get-caller-identity
 
+      - name: Validate SAM template
+        run: sam validate -t infra/sam/template.yaml
+
       - name: SAM build
         run: sam build --template-file infra/sam/template.yaml --debug
 
+      # ---- DEV deploy ----
       - name: Deploy to DEV
         run: |
-          set -e
+          set -euo pipefail
           sam deploy \
             --no-confirm-changeset \
             --resolve-s3 \
-            --capabilities CAPABILITY_IAM \
-            --stack-name slack-rag-dev \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --stack-name "${STACK_DEV}" \
             --parameter-overrides \
-              ArtifactsBucket=slack-rag-artifacts-73918652 \
-              INDEX_PREFIX=rag/index \
-              USE_S3_INDEX=true
+              ArtifactsBucket=${ARTIFACTS_BUCKET} \
+              IndexPrefix=rag/index \
+              UseS3Index=true
 
       - name: Check DEV stack status
-        run: aws cloudformation describe-stacks --stack-name slack-rag-dev
+        run: aws cloudformation describe-stacks --stack-name "${STACK_DEV}"
 
       - name: DEV smoke test (with retry)
         run: |
-          API=$(aws cloudformation describe-stacks --stack-name slack-rag-dev \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
-          echo "API endpoint: $API"
+          set -euo pipefail
+          API_BASE=$(aws cloudformation describe-stacks --stack-name "${STACK_DEV}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" --output text)
+          CHAT_URL=$(aws cloudformation describe-stacks --stack-name "${STACK_DEV}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" --output text)
 
-          for i in {1..5}; do
-            echo "Attempt $i: checking /health"
-            if curl -sf "$API/health"; then
+          echo "API_BASE: ${API_BASE}"
+          echo "CHAT_URL: ${CHAT_URL}"
+
+          # Retry /health because of potential cold starts or alias propagation
+          for i in {1..6}; do
+            echo "Attempt $i: GET ${API_BASE}/health"
+            if curl -sf "${API_BASE}/health"; then
               echo "Health check passed"
               break
             fi
@@ -62,29 +78,58 @@ jobs:
             sleep 10
           done
 
-          echo "Checking /chat endpoint"
-          curl -sf -X POST "$API/chat" -H "Content-Type: application/json" \
+          echo "Checking /chat"
+          curl -sf -X POST "${CHAT_URL}" -H "Content-Type: application/json" \
             -d '{"user_msg":"__ping__ retrieval only"}'
 
+      # ---- Manual approval for PROD ----
       - name: Manual approval before PROD
         uses: trstringer/manual-approval@v1
         with:
-          secret: ${{ github.TOKEN }}
+          secret: ${{ secrets.GITHUB_TOKEN }}
           approvers: venkatamarella
           minimum-approvals: 1
+          issue-title: "Approve CD to PROD"
+          issue-body: "Approve deployment of current main to PROD stack: ${{ env.STACK_PROD }}"
 
+      # ---- PROD deploy ----
       - name: Deploy to PROD
         run: |
-          set -e
+          set -euo pipefail
           sam deploy \
             --no-confirm-changeset \
             --resolve-s3 \
-            --capabilities CAPABILITY_IAM \
-            --stack-name slack-rag-prod-v2 \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --stack-name "${STACK_PROD}" \
             --parameter-overrides \
-              ArtifactsBucket=slack-rag-artifacts-73918652 \
-              INDEX_PREFIX=rag/index \
-              USE_S3_INDEX=true
+              ArtifactsBucket=${ARTIFACTS_BUCKET} \
+              IndexPrefix=rag/index \
+              UseS3Index=true
 
       - name: Check PROD stack status
-        run: aws cloudformation describe-stacks --stack-name slack-rag-prod-v2
+        run: aws cloudformation describe-stacks --stack-name "${STACK_PROD}"
+
+      - name: PROD smoke test (with retry)
+        run: |
+          set -euo pipefail
+          API_BASE=$(aws cloudformation describe-stacks --stack-name "${STACK_PROD}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" --output text)
+          CHAT_URL=$(aws cloudformation describe-stacks --stack-name "${STACK_PROD}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" --output text)
+
+          echo "API_BASE: ${API_BASE}"
+          echo "CHAT_URL: ${CHAT_URL}"
+
+          for i in {1..6}; do
+            echo "Attempt $i: GET ${API_BASE}/health"
+            if curl -sf "${API_BASE}/health"; then
+              echo "Health check passed"
+              break
+            fi
+            echo "Health check failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Checking /chat"
+          curl -sf -X POST "${CHAT_URL}" -H "Content-Type: application/json" \
+            -d '{"user_msg":"__ping__ retrieval only"}'
