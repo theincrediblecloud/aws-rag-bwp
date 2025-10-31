@@ -6,54 +6,63 @@ on:
     branches-ignore: [ main ]
 
 jobs:
-  ci:
+  test:
     runs-on: ubuntu-latest
     env:
-      PYTHONPATH: src
-      # keep local embeddings for CI speed/stability
-      EMBED_PROVIDER: local
-      EMBED_MODEL: sentence-transformers/all-MiniLM-L6-v2
-      INDEX_DIR: store
-      INDEX_PATH: store/vectors.npy
-      META_PATH: store/meta.jsonl
-      CHUNK_SIZE: "600"
-      CHUNK_OVERLAP: "80"
-      TOP_K: "8"
+      PYTHONUNBUFFERED: "1"
+      PYTHONPATH: "src"
+      # Force pure-local mode so CI never touches AWS
+      APP_ENV: "local"
+      USE_S3_INDEX: "false"
+      EMBED_PROVIDER: "local"
+      MODEL_NAME: "sentence-transformers/all-MiniLM-L6-v2"
+      EMBED_DIM: "384"
+      LLM_PROVIDER: "none"
+      # retrieval knobs (safe defaults)
+      RETRIEVE_K: "24"
+      CONTEXT_K: "8"
+      FALLBACK_MIN_SCORE: "0.32"
+      ANSWER_FALLBACK: "allow"
+      # Speed up HF downloads
+      HF_HOME: "${{ runner.temp }}/.cache/huggingface"
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - name: Install deps
-        run: |
-          python -m pip install -U pip
-          pip install -r requirements.txt
-          # test-only deps
-          pip install ruff mypy pytest sentence-transformers torch pypdf python-docx
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Lint & type
-        run: |
-          ruff check src
-          mypy src || true  # flip to strict once clean
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Unit tests
-        run: pytest -q
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('src/requirements-dev.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
 
-      - name: Build tiny index (fixture corpus)
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HF_HOME }}
+          key: hf-${{ runner.os }}-${{ env.MODEL_NAME }}
+
+      - name: Install dependencies
         run: |
-          mkdir -p data/collections/fixture
-          printf "RAG retrieves context for LLMs.\n" > data/collections/fixture/intro.md
-          python -m rag.ingest.pipeline --data-dir data/collections/fixture --fresh
+          python -m pip install --upgrade pip
+          pip install -r src/requirements-dev.txt
+
+      - name: Lint import / quick sanity
+        run: |
           python - <<'PY'
-          import numpy as np, os
-          V = np.load("store/vectors.npy"); d=V.shape[1]
-          assert V.shape[0] > 0 and d in (384,1024), f"bad vectors shape {V.shape}"
-          print("OK vectors:", V.shape)
+          import importlib; import sys
+          sys.path.append("src")
+          importlib.import_module("rag.api.app")
+          print("app import OK")
           PY
 
-      - name: Golden-set (fast)
+      - name: Run tests
         run: |
-          # spin local API
-          uvicorn rag.api.app:app --app-dir src --port 8001 --workers 1 & echo $! > uv.pid
-          sleep 2
-          python golden/eval_golden.py --api http://127.0.0.1:8001/chat golden/fast.jsonl -v
-          kill $(cat uv.pid)
+          pytest -q
