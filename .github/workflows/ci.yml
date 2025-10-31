@@ -1,16 +1,15 @@
 name: CI
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
   push:
-    branches-ignore: [ main ]
+    branches-ignore: [ main, master ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      PYTHONUNBUFFERED: "1"
-      PYTHONPATH: "src"
+      PYTHONPATH: ${{ github.workspace }}/src
       # Force pure-local mode so CI never touches AWS
       APP_ENV: "local"
       USE_S3_INDEX: "false"
@@ -23,8 +22,6 @@ jobs:
       CONTEXT_K: "8"
       FALLBACK_MIN_SCORE: "0.32"
       ANSWER_FALLBACK: "allow"
-      # Speed up HF downloads
-      HF_HOME: "${{ runner.temp }}/.cache/huggingface"
 
     steps:
       - name: Checkout
