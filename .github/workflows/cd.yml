@@ -1,73 +1,62 @@
 name: CD
-
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
-
-permissions:
-  id-token: write
-  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     env:
-      PYTHONPATH: ${{ github.workspace }}/src
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      STACK_NAME: ${{ secrets.STACK_NAME }}
-      ARTIFACTS_BUCKET: ${{ secrets.ARTIFACTS_BUCKET }}
-
+      AWS_REGION: us-east-1
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install build deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r src/requirements.txt
-
-      - name: Build vectors (NumPy) & upload to S3
-        run: |
-          mkdir -p store
-          python -m rag.ingest.build_vectors_numpy \
-            --collection data/collections/fam \
-            --bucket "${ARTIFACTS_BUCKET}" \
-            --prefix rag/index \
-            --meta_local store/meta.jsonl \
-            --vectors_out store/vectors.npy
+          role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/gh-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: SAM build
-        run: |
-          sam build --use-container -t infra/sam/template.yaml
+        run: sam build --template-file infra/sam/template.yaml
 
-      - name: SAM deploy
-        env:
-          SLACK_SIGNING_SECRET_ARN: ${{ secrets.SLACK_SIGNING_SECRET_ARN }}
-          SLACK_BOT_TOKEN_ARN: ${{ secrets.SLACK_BOT_TOKEN_ARN }}
+      - name: Deploy to DEV (alias)
         run: |
           sam deploy \
-            --stack-name "${STACK_NAME}" \
-            --region "${AWS_REGION}" \
-            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
             --resolve-s3 \
-            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_IAM \
+            --stack-name slack-rag-dev \
             --parameter-overrides \
-              ArtifactsBucket="${ARTIFACTS_BUCKET}" \
-              RagApiUrl="https://example.invalid/override-at-runtime" \
-              SlackBotTokenArn="${SLACK_BOT_TOKEN_ARN}" \
-              SlackSigningSecretArn="${SLACK_SIGNING_SECRET_ARN}"
+              ArtifactsBucket=slack-rag-artifacts-73918652 \
+              INDEX_PREFIX=rag/index \
+              USE_S3_INDEX=true
 
-      - name: Post-deploy smoke
+      - name: DEV smoke
         run: |
-          bash scripts/post_deploy_smoke.sh "${STACK_NAME}" "${AWS_REGION}"
+          API=$(aws cloudformation describe-stacks --stack-name slack-rag-dev \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
+          curl -sf "$API/health" | jq .
+          curl -sf -X POST "$API/chat" -H "Content-Type: application/json" \
+            -d '{"user_msg":"__ping__ retrieval only"}' | jq .
+
+      - name: Manual approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: venkatamarella
+          minimum-approvals: 1
+
+      - name: Deploy to PROD (alias, traffic shifting)
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM \
+            --stack-name slack-rag-prod-v2 \
+            --parameter-overrides \
+              ArtifactsBucket=slack-rag-artifacts-73918652 \
+              INDEX_PREFIX=rag/index \
+              USE_S3_INDEX=true

@@ -4,6 +4,7 @@ import json
 from base64 import b64decode
 import boto3
 from typing import List, Dict
+import re
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
@@ -14,6 +15,12 @@ _SEEN_EVENTS: Dict[str, float] = {}  # event_id -> expires_at (epoch secs)
 _DEDUPE_TTL = 600  # 10 minutes
 
 SLACK_BOT_TOKEN = None  # lazily fetched
+_HEADING_RE   = re.compile(r'^\s*(#{1,6})\s+(.*)$', re.M)
+_CODEBLOCK_RE = re.compile(r'```.+?```', re.S)
+_INLINECODE_RE= re.compile(r'`([^`]+)`')
+SLACK_BRIEF = os.getenv("SLACK_BRIEF", "1") == "1"
+SLACK_BRIEF_MAX_LINES = int(os.getenv("SLACK_BRIEF_MAX_LINES", "25"))
+SLACK_BRIEF_MAX_CHARS = int(os.getenv("SLACK_BRIEF_MAX_CHARS", "2500"))
 
 def _now() -> float:
     return time.time()
@@ -98,6 +105,57 @@ def _post_message(channel: str, text: str = None, blocks: List[Dict] = None, thr
     with urllib.request.urlopen(req, timeout=6) as r:
         return json.loads(r.read().decode())
 
+def _promote_subheads(lines: list[str]) -> list[str]:
+    """Turn '## Something' into '*Something*' and keep as its own line."""
+    out = []
+    for ln in lines:
+        m = _HEADING_RE.match(ln)
+        if m:
+            hashes, text = m.group(1), m.group(2).strip()
+            if len(hashes) == 1:
+                # H1 handled in _smart_compact (as title)
+                continue
+            # H2+ become bold subsection lines
+            out.append(f"*{text}*")
+        else:
+            out.append(ln)
+    return out
+
+def _smart_compact_with_subheads(s: str) -> str:
+    if not s:
+        return ""
+    # strip code blocks/inline code
+    s = _CODEBLOCK_RE.sub("", s)
+    s = _INLINECODE_RE.sub(r"\1", s)
+
+    # extract first H1 as title; leave other headings for promotion
+    title = None
+    lines = []
+    for raw in s.splitlines():
+        m = _HEADING_RE.match(raw)
+        if m and len(m.group(1)) == 1 and title is None:
+            title = m.group(2).strip()
+            continue
+        lines.append(raw.rstrip())
+
+    # collapse blanks
+    lines = [ln for ln in lines if ln.strip()]
+
+    # promote H2+ to bold lines
+    lines = _promote_subheads(lines)
+
+    # compact only if long
+    joined = "\n".join(lines)
+    if len(lines) > SLACK_BRIEF_MAX_LINES or len(joined) > SLACK_BRIEF_MAX_CHARS:
+        lines = lines[:SLACK_BRIEF_MAX_LINES]
+        if not lines[-1].endswith("…"):
+            lines[-1] = lines[-1].rstrip(" .") + "…"
+
+    body = "\n".join(lines)
+    if title:
+        body = f"*{title}*\n{body}"
+    return body
+
 def _clean_text(s: str, max_len: int = 2500) -> str:
     # collapse duplicate lines/paragraphs and clamp size to avoid Slack truncation
     if not s:
@@ -117,23 +175,23 @@ def _clean_text(s: str, max_len: int = 2500) -> str:
         out = out[:max_len].rstrip() + "…"
     return out
 
-def _as_blocks(answer: str, citations: List[Dict]) -> List[Dict]:
+def _as_blocks(answer: str, citations: list[dict]) -> list[dict]:
     answer = _clean_text(answer, max_len=2500)
-    blocks: List[Dict] = [{
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": answer or "No answer."}
-    }]
+    if SLACK_BRIEF:
+        answer = _smart_compact_with_subheads(answer)
+
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": answer}}]
+
     if citations:
-        blocks.append({"type": "divider"})
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Top sources*"}})
-        for c in citations[:8]:  # cap to keep payload small
-            title = c.get("title") or "(untitled)"
-            page = c.get("page")
-            page_hint = f" (p. {page})" if page is not None else ""
-            score = c.get("score")
-            score_hint = f" — _score {score:.3f}_" if isinstance(score, (float, int)) else ""
-            line = f"• *{title}{page_hint}*{score_hint}"
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": line}})
+        tops = citations[:3]
+        cite_lines = []
+        for c in tops:
+            t = (c.get("title") or c.get("source_path") or "source").strip()
+            sc = c.get("score")
+            cite_lines.append(f"• {t} (score {sc:.2f})" if isinstance(sc, (int,float)) else f"• {t}")
+        blocks.append({"type": "context", "elements": [
+            {"type": "mrkdwn", "text": "*Sources*\n" + "\n".join(cite_lines)}
+        ]})
     return blocks
 
 def _call_rag_api(question: str) -> Dict:

@@ -1,0 +1,1 @@
+../../word/AWS-GenAI.md

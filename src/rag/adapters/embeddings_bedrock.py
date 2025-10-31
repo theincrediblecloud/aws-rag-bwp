@@ -2,7 +2,6 @@
 import os, time
 import json
 import boto3
-import numpy as np
 
 class BedrockEmbedder:
     """
