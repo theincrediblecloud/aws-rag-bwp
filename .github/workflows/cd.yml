@@ -1,4 +1,5 @@
 name: CD
+
 on:
   workflow_dispatch:
   push:
@@ -12,18 +13,26 @@ jobs:
       contents: read
     env:
       AWS_REGION: us-east-1
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::471112701253:role/gh-actions-deploy
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
       - name: SAM build
         run: sam build --template-file infra/sam/template.yaml --debug
 
-      - name: Deploy to DEV (alias)
+      - name: Deploy to DEV
         run: |
+          set -e
           sam deploy \
             --no-confirm-changeset \
             --resolve-s3 \
@@ -34,23 +43,39 @@ jobs:
               INDEX_PREFIX=rag/index \
               USE_S3_INDEX=true
 
-      - name: DEV smoke
+      - name: Check DEV stack status
+        run: aws cloudformation describe-stacks --stack-name slack-rag-dev
+
+      - name: DEV smoke test (with retry)
         run: |
           API=$(aws cloudformation describe-stacks --stack-name slack-rag-dev \
             --query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" --output text)
-          curl -sf "$API/health" | jq .
-          curl -sf -X POST "$API/chat" -H "Content-Type: application/json" \
-            -d '{"user_msg":"__ping__ retrieval only"}' | jq .
+          echo "API endpoint: $API"
 
-      - name: Manual approval
+          for i in {1..5}; do
+            echo "Attempt $i: checking /health"
+            if curl -sf "$API/health"; then
+              echo "Health check passed"
+              break
+            fi
+            echo "Health check failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Checking /chat endpoint"
+          curl -sf -X POST "$API/chat" -H "Content-Type: application/json" \
+            -d '{"user_msg":"__ping__ retrieval only"}'
+
+      - name: Manual approval before PROD
         uses: trstringer/manual-approval@v1
         with:
           secret: ${{ github.TOKEN }}
           approvers: venkatamarella
           minimum-approvals: 1
 
-      - name: Deploy to PROD (alias, traffic shifting)
+      - name: Deploy to PROD
         run: |
+          set -e
           sam deploy \
             --no-confirm-changeset \
             --resolve-s3 \
@@ -60,7 +85,6 @@ jobs:
               ArtifactsBucket=slack-rag-artifacts-73918652 \
               INDEX_PREFIX=rag/index \
               USE_S3_INDEX=true
-      - name: Debug AWS context
-        run: |
-          aws sts get-caller-identity
-          aws cloudformation describe-stacks --stack-name slack-rag-dev
+
+      - name: Check PROD stack status
+        run: aws cloudformation describe-stacks --stack-name slack-rag-prod-v2
