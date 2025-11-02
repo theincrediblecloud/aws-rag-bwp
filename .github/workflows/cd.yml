@@ -26,6 +26,12 @@ jobs:
         with:
           version: '1.145.2'
 
+      - name: Show tool versions
+        run: |
+          sam --version
+          aws --version
+          docker --version
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -38,21 +44,35 @@ jobs:
       - name: Validate SAM template
         run: sam validate -t infra/sam/template.yaml
 
-      - name: SAM build
-        run: sam build --template-file infra/sam/template.yaml
+      - name: SAM build (arm64 in container)
+        run: sam build --template-file infra/sam/template.yaml --use-container --parallel
 
       - name: Deploy to DEV
+        env:
+          # required parameters with no defaults in your template — store these in repo/org secrets
+          SLACK_SIGNING_SECRET_ARN: ${{ secrets.SLACK_SIGNING_SECRET_ARN }}
+          SLACK_BOT_TOKEN_ARN:     ${{ secrets.SLACK_BOT_TOKEN_ARN }}
+          RAG_API_URL:             ${{ secrets.RAG_API_URL }}   # if your Slack lambda needs it
+          LLM_MODEL_ID:            ${{ secrets.LLM_MODEL_ID }}  # optional if template has default
         run: |
           set -euo pipefail
           sam deploy \
             --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
             --resolve-s3 \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --stack-name "${STACK_DEV}" \
             --parameter-overrides \
               ArtifactsBucket=${ARTIFACTS_BUCKET} \
               IndexPrefix=rag/index \
-              UseS3Index=true
+              UseS3Index=true \
+              SlackSigningSecretArn=${SLACK_SIGNING_SECRET_ARN} \
+              SlackBotTokenArn=${SLACK_BOT_TOKEN_ARN} \
+              RagApiUrl=${RAG_API_URL} \
+              LlmModelId=${LLM_MODEL_ID}
+
+      - name: Check DEV stack status
+        run: aws cloudformation describe-stacks --stack-name "${STACK_DEV}"
 
       - name: DEV smoke test
         run: |
@@ -61,9 +81,10 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" --output text)
           CHAT_URL=$(aws cloudformation describe-stacks --stack-name "${STACK_DEV}" \
             --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" --output text)
-          echo "API_BASE=${API_BASE}"; echo "CHAT_URL=${CHAT_URL}"
+          echo "API_BASE=${API_BASE}"
+          echo "CHAT_URL=${CHAT_URL}"
 
-          for i in {1..6}; do
+          for i in {1..8}; do
             echo "Attempt $i: GET ${API_BASE}/health"
             if curl -sf "${API_BASE}/health"; then break; fi
             sleep 10
@@ -82,14 +103,24 @@ jobs:
           issue-body: "Approve deployment to ${{ env.STACK_PROD }}"
 
       - name: Deploy to PROD
+        env:
+          SLACK_SIGNING_SECRET_ARN: ${{ secrets.SLACK_SIGNING_SECRET_ARN }}
+          SLACK_BOT_TOKEN_ARN:     ${{ secrets.SLACK_BOT_TOKEN_ARN }}
+          RAG_API_URL:             ${{ secrets.RAG_API_URL }}
+          LLM_MODEL_ID:            ${{ secrets.LLM_MODEL_ID }}
         run: |
           set -euo pipefail
           sam deploy \
             --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
             --resolve-s3 \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --stack-name "${STACK_PROD}" \
             --parameter-overrides \
               ArtifactsBucket=${ARTIFACTS_BUCKET} \
               IndexPrefix=rag/index \
-              UseS3Index=true
+              UseS3Index=true \
+              SlackSigningSecretArn=${SLACK_SIGNING_SECRET_ARN} \
+              SlackBotTokenArn=${SLACK_BOT_TOKEN_ARN} \
+              RagApiUrl=${RAG_API_URL} \
+              LlmModelId=${LLM_MODEL_ID}
