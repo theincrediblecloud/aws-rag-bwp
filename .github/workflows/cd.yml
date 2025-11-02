@@ -52,8 +52,13 @@ jobs:
 
       - name: Validate SAM template
         run: sam validate -t infra/sam/template.yaml
-
+        
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       # Arm64 runner, no container needed unless you add native deps
+      
       - name: SAM build (arm64, no container)
         run: sam build --template-file infra/sam/template.yaml --parallel --cached
 
