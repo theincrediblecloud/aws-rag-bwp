@@ -7,10 +7,12 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64
     permissions:
       id-token: write
       contents: read
+    timeout-minutes: 60
+
     env:
       AWS_REGION: us-east-1
       STACK_DEV: slack-rag-dev
@@ -21,10 +23,17 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      # Speed up repeat SAM builds
+      - name: Cache SAM artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/sam
+            .aws-sam/cache
+          key: ${{ runner.os }}-sam-${{ hashFiles('infra/sam/template.yaml', 'src/**') }}
+
       - name: Setup SAM CLI
         uses: aws-actions/setup-sam@v2
-        with:
-          version: '1.145.2'
 
       - name: Show tool versions
         run: |
@@ -44,16 +53,16 @@ jobs:
       - name: Validate SAM template
         run: sam validate -t infra/sam/template.yaml
 
-      - name: SAM build (arm64 in container)
-        run: sam build --template-file infra/sam/template.yaml --use-container --parallel
+      # Arm64 runner, no container needed unless you add native deps
+      - name: SAM build (arm64, no container)
+        run: sam build --template-file infra/sam/template.yaml --parallel --cached
 
       - name: Deploy to DEV
         env:
-          # required parameters with no defaults in your template — store these in repo/org secrets
           SLACK_SIGNING_SECRET_ARN: ${{ secrets.SLACK_SIGNING_SECRET_ARN }}
           SLACK_BOT_TOKEN_ARN:     ${{ secrets.SLACK_BOT_TOKEN_ARN }}
-          RAG_API_URL:             ${{ secrets.RAG_API_URL }}   # if your Slack lambda needs it
-          LLM_MODEL_ID:            ${{ secrets.LLM_MODEL_ID }}  # optional if template has default
+          RAG_API_URL:             ${{ secrets.RAG_API_URL }}
+          LLM_MODEL_ID:            ${{ secrets.LLM_MODEL_ID }}
         run: |
           set -euo pipefail
           sam deploy \
@@ -71,30 +80,41 @@ jobs:
               RagApiUrl=${RAG_API_URL} \
               LlmModelId=${LLM_MODEL_ID}
 
-      - name: Check DEV stack status
-        run: aws cloudformation describe-stacks --stack-name "${STACK_DEV}"
-
-      - name: DEV smoke test
+      - name: Collect DEV outputs
+        id: dev_out
         run: |
           set -euo pipefail
           API_BASE=$(aws cloudformation describe-stacks --stack-name "${STACK_DEV}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" --output text)
           CHAT_URL=$(aws cloudformation describe-stacks --stack-name "${STACK_DEV}" \
             --query "Stacks[0].Outputs[?OutputKey=='ChatApiUrl'].OutputValue" --output text)
+          echo "api_base=${API_BASE}" >> $GITHUB_OUTPUT
+          echo "chat_url=${CHAT_URL}" >> $GITHUB_OUTPUT
           echo "API_BASE=${API_BASE}"
           echo "CHAT_URL=${CHAT_URL}"
 
+      - name: DEV smoke test
+        run: |
+          set -euo pipefail
+          API_BASE="${{ steps.dev_out.outputs.api_base }}"
+          CHAT_URL="${{ steps.dev_out.outputs.chat_url }}"
+
           for i in {1..8}; do
             echo "Attempt $i: GET ${API_BASE}/health"
-            if curl -sf "${API_BASE}/health"; then break; fi
+            if curl -sf "${API_BASE}/health"; then
+              echo "Health check passed"
+              break
+            fi
+            echo "Retrying in 10s..."
             sleep 10
           done
 
+          echo "POST ${CHAT_URL}"
           curl -sf -X POST "${CHAT_URL}" -H "Content-Type: application/json" \
-            -d '{"user_msg":"__ping__ retrieval only"}'
+            -d '{"user_msg":"__ping__ retrieval only"}' >/dev/null
 
       - name: Manual approval before PROD
-        timeout-minutes: 30        # <-- stop waiting after 30 min
+        timeout-minutes: 30
         uses: trstringer/manual-approval@v1
         with:
           secret: ${{ secrets.GITHUB_TOKEN }}
@@ -102,6 +122,7 @@ jobs:
           minimum-approvals: 1
           issue-title: "Approve CD to PROD"
           issue-body: "Approve deployment to ${{ env.STACK_PROD }}"
+
       - name: Deploy to PROD
         env:
           SLACK_SIGNING_SECRET_ARN: ${{ secrets.SLACK_SIGNING_SECRET_ARN }}
@@ -124,3 +145,6 @@ jobs:
               SlackBotTokenArn=${SLACK_BOT_TOKEN_ARN} \
               RagApiUrl=${RAG_API_URL} \
               LlmModelId=${LLM_MODEL_ID}
+
+      - name: PROD stack status
+        run: aws cloudformation describe-stacks --stack-name "${STACK_PROD}"
