@@ -94,6 +94,7 @@ jobs:
             -d '{"user_msg":"__ping__ retrieval only"}'
 
       - name: Manual approval before PROD
+        timeout-minutes: 30        # <-- stop waiting after 30 min
         uses: trstringer/manual-approval@v1
         with:
           secret: ${{ secrets.GITHUB_TOKEN }}
@@ -101,7 +102,6 @@ jobs:
           minimum-approvals: 1
           issue-title: "Approve CD to PROD"
           issue-body: "Approve deployment to ${{ env.STACK_PROD }}"
-
       - name: Deploy to PROD
         env:
           SLACK_SIGNING_SECRET_ARN: ${{ secrets.SLACK_SIGNING_SECRET_ARN }}
