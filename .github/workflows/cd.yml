@@ -17,7 +17,7 @@ jobs:
       AWS_REGION: us-east-1
       STACK_DEV: slack-rag-dev
       STACK_PROD: slack-rag-prod-v2
-      ARTIFACTS_BUCKET: slack-rag-artifacts-73918652
+      ARTIFACTS_BUCKET: your-aws-s3-bucket
 
     steps:
       - name: Checkout source
@@ -44,7 +44,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::471112701253:role/gh-actions-deploy
+          role-to-assume: arn:aws:iam::{{your-aws-account}}:role/gh-actions-deploy
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify AWS identity
