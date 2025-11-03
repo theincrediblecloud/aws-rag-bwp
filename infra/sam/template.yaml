@@ -22,10 +22,10 @@ Parameters:
     Type: String
   LlmModelId:
     Type: String
-    Default: arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
+    Default: {{your-chosen-model-id}}
   LlmInferenceProfileArn:
     Type: String
-    Default: arn:aws:bedrock:us-east-1:471112701253:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
+    Default: {{your-chosen-model-id}-arn}
   UseS3Index:
     Type: String
     AllowedValues: ["true","false"]
@@ -215,7 +215,7 @@ Resources:
           DDB_CACHE_TABLE: !Ref RagAnswerCache
       Role: !GetAtt RAGApiRole.Arn
       Layers:
-        - arn:aws:lambda:us-east-1:471112701253:layer:numpy-1264-arm64:9
+        - arn:aws:lambda:us-east-1:{{your-aws-account}}:layer:numpy-1264-arm64:9
       Events:
         AnyRoute:
           Type: HttpApi
